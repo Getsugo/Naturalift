@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0d10">
+<title>NaturaLift — Nutrition &amp; Musculation Naturelle</title>
+<meta name="description" content="Calculateur de macros et suivi nutritionnel pour pratiquants naturels de musculation.">
+
+<link rel="manifest" href="./manifest.json">
+<link rel="icon" href="./icon-192.png">
+<link rel="apple-touch-icon" href="./icon-192.png">
+<link rel="stylesheet" href="./style.css?v=1">
+</head>
+<body>
+
+<div class="app">
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-dot" aria-hidden="true"></span>
+      NATURA<span class="accent">LIFT</span>
+    </div>
+    <nav class="tabs" role="tablist" aria-label="Navigation principale">
+      <button class="tab active" data-tab="calc" role="tab" aria-selected="true">Calculateur</button>
+      <button class="tab" data-tab="track" role="tab" aria-selected="false">Suivi du jour</button>
+    </nav>
+  </header>
+
+  <main>
+
+    <!-- ===================== ONGLET CALCULATEUR ===================== -->
+    <section id="panel-calc" class="panel active">
+
+      <form id="calcForm" class="card form-card">
+        <h1 class="card-title">Tes objectifs, calculés pour un naturel</h1>
+        <p class="card-sub">Renseigne ton profil pour obtenir des cibles caloriques et de macros adaptées à ta physiologie, sans les excès des protocoles "assistés".</p>
+
+        <div class="field-grid">
+
+          <div class="field">
+            <label for="sex">Sexe</label>
+            <div class="segmented" role="radiogroup" aria-label="Sexe">
+              <input type="radio" id="sexH" name="sex" value="H" checked>
+              <label for="sexH" class="seg-btn">Homme</label>
+              <input type="radio" id="sexF" name="sex" value="F">
+              <label for="sexF" class="seg-btn">Femme</label>
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="age">Âge</label>
+            <input type="number" id="age" name="age" min="14" max="90" value="30" required inputmode="numeric">
+          </div>
+
+          <div class="field">
+            <label for="weight">Poids (kg)</label>
+            <input type="number" id="weight" name="weight" min="30" max="250" step="0.1" value="75" required inputmode="decimal">
+          </div>
+
+          <div class="field">
+            <label for="height">Taille (cm)</label>
+            <input type="number" id="height" name="height" min="120" max="230" value="178" required inputmode="numeric">
+          </div>
+
+          <div class="field field-wide">
+            <label for="activity">Niveau d'activité</label>
+            <select id="activity" name="activity">
+              <option value="1.2">Sédentaire — peu ou pas de sport</option>
+              <option value="1.375">Léger — 1 à 3 séances / semaine</option>
+              <option value="1.55" selected>Modéré — 3 à 5 séances / semaine</option>
+              <option value="1.725">Élevé — 6 à 7 séances / semaine</option>
+              <option value="1.9">Très élevé — sport intense quotidien / travail physique</option>
+            </select>
+          </div>
+
+          <div class="field field-wide">
+            <label for="objective">Objectif</label>
+            <select id="objective" name="objective">
+              <option value="seche">Sèche — perte de graisse</option>
+              <option value="prise">Prise de masse — gain musculaire</option>
+              <option value="maintien" selected>Maintien</option>
+              <option value="recomp">Recomposition corporelle</option>
+            </select>
+          </div>
+
+        </div>
+
+        <button type="submit" class="btn-primary">Calculer mes objectifs</button>
+      </form>
+
+      <section id="results" class="results" hidden>
+
+        <div class="card targets-card">
+          <div class="targets-header">
+            <h2 class="card-title">Cibles quotidiennes</h2>
+            <span id="objectiveLabel" class="chip"></span>
+          </div>
+
+          <div class="kcal-highlight">
+            <span id="kcalDaily" class="kcal-number">0</span>
+            <span class="kcal-unit">kcal / jour</span>
+          </div>
+
+          <div class="macro-list" id="macroList">
+            <!-- injecté par app.js -->
+          </div>
+
+          <p id="femaleNote" class="note" hidden>Note pratiquante : un apport en lipides suffisant est essentiel au bon fonctionnement hormonal et du cycle menstruel — le seuil plancher est volontairement plus élevé.</p>
+        </div>
+
+        <div class="card period-card">
+          <h2 class="card-title-sm">Projection hebdomadaire &amp; mensuelle</h2>
+          <div class="period-table" id="periodTable">
+            <!-- injecté par app.js -->
+          </div>
+        </div>
+
+        <button type="button" id="goToTracker" class="btn-secondary">Utiliser ces cibles pour mon suivi →</button>
+
+      </section>
+
+    </section>
+
+    <!-- ===================== ONGLET SUIVI ===================== -->
+    <section id="panel-track" class="panel" hidden>
+
+      <div id="noProfile" class="card empty-card">
+        <p>Aucun objectif défini pour le moment.</p>
+        <button type="button" id="goToCalcFromTrack" class="btn-secondary">Aller au calculateur</button>
+      </div>
+
+      <div id="trackerContent" hidden>
+
+        <div class="card gauges-card">
+          <div class="gauges-header">
+            <h2 class="card-title-sm">Bilan du jour</h2>
+            <span id="trackDate" class="chip chip-muted"></span>
+          </div>
+          <div class="gauges-grid" id="gaugesGrid">
+            <!-- injecté par app.js -->
+          </div>
+        </div>
+
+        <form id="foodForm" class="card form-card">
+          <h2 class="card-title-sm">Ajouter un aliment / repas</h2>
+          <div class="field-grid field-grid-food">
+            <div class="field field-wide">
+              <label for="foodName">Nom</label>
+              <input type="text" id="foodName" placeholder="Ex : Blanc de poulet 150g" required>
+            </div>
+            <div class="field">
+              <label for="foodKcal">Calories</label>
+              <input type="number" id="foodKcal" min="0" step="1" inputmode="numeric" required>
+            </div>
+            <div class="field">
+              <label for="foodProtein">Protéines (g)</label>
+              <input type="number" id="foodProtein" min="0" step="0.1" inputmode="decimal" value="0">
+            </div>
+            <div class="field">
+              <label for="foodFat">Lipides (g)</label>
+              <input type="number" id="foodFat" min="0" step="0.1" inputmode="decimal" value="0">
+            </div>
+            <div class="field">
+              <label for="foodCarbs">Glucides (g)</label>
+              <input type="number" id="foodCarbs" min="0" step="0.1" inputmode="decimal" value="0">
+            </div>
+          </div>
+          <button type="submit" class="btn-primary">Ajouter au journal</button>
+        </form>
+
+        <div class="card log-card">
+          <div class="log-header">
+            <h2 class="card-title-sm">Journal du jour</h2>
+            <button type="button" id="resetDay" class="btn-ghost">Réinitialiser</button>
+          </div>
+          <ul id="foodLog" class="food-log">
+            <!-- injecté par app.js -->
+          </ul>
+          <p id="logEmpty" class="note">Aucun aliment enregistré aujourd'hui.</p>
+        </div>
+
+      </div>
+
+    </section>
+
+  </main>
+
+  <footer class="app-footer">
+    <p>NaturaLift — outil indicatif, ne remplace pas l'avis d'un professionnel de santé ou d'un coach diplômé.</p>
+  </footer>
+
+</div>
+
+<script src="./app.js?v=1" defer></script>
+</body>
+</html>
