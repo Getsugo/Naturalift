@@ -10,7 +10,7 @@
 <link rel="manifest" href="./manifest.json">
 <link rel="icon" href="./icon-192.png">
 <link rel="apple-touch-icon" href="./icon-192.png">
-<link rel="stylesheet" href="./style.css?v=1">
+<link rel="stylesheet" href="./style.css?v=2">
 </head>
 <body>
 
@@ -23,7 +23,9 @@
     </div>
     <nav class="tabs" role="tablist" aria-label="Navigation principale">
       <button class="tab active" data-tab="calc" role="tab" aria-selected="true">Calculateur</button>
-      <button class="tab" data-tab="track" role="tab" aria-selected="false">Suivi du jour</button>
+      <button class="tab" data-tab="track" role="tab" aria-selected="false">Suivi</button>
+      <button class="tab" data-tab="history" role="tab" aria-selected="false">Historique</button>
+      <button class="tab" data-tab="stats" role="tab" aria-selected="false">Bilans</button>
     </nav>
   </header>
 
@@ -140,6 +142,10 @@
           <div class="gauges-grid" id="gaugesGrid">
             <!-- injecté par app.js -->
           </div>
+          <div class="validate-row">
+            <span id="validatedChip" class="chip" hidden>Journée validée ✓</span>
+            <button type="button" id="validateDay" class="btn-secondary">Valider la journée</button>
+          </div>
         </div>
 
         <form id="foodForm" class="card form-card">
@@ -184,6 +190,147 @@
 
     </section>
 
+    <!-- ===================== ONGLET HISTORIQUE ===================== -->
+    <section id="panel-history" class="panel" hidden>
+
+      <div id="historyEmpty" class="card empty-card" hidden>
+        <p>Aucune journée enregistrée pour le moment. Ajoute des aliments dans l'onglet Suivi pour commencer ton historique.</p>
+      </div>
+
+      <div id="historyBrowse">
+
+        <div class="card view-toggle-card">
+          <div class="segmented" role="radiogroup" aria-label="Mode d'affichage de l'historique">
+            <input type="radio" id="viewList" name="historyView" value="list" checked>
+            <label for="viewList" class="seg-btn">Liste</label>
+            <input type="radio" id="viewCalendar" name="historyView" value="calendar">
+            <label for="viewCalendar" class="seg-btn">Calendrier</label>
+          </div>
+        </div>
+
+        <div id="historyListView" class="card list-card">
+          <ul id="historyList" class="history-list">
+            <!-- injecté par app.js -->
+          </ul>
+        </div>
+
+        <div id="historyCalendarView" class="card calendar-card" hidden>
+          <div class="calendar-nav">
+            <button type="button" id="calPrev" class="btn-ghost" aria-label="Mois précédent">‹</button>
+            <span id="calLabel" class="cal-label"></span>
+            <button type="button" id="calNext" class="btn-ghost" aria-label="Mois suivant">›</button>
+          </div>
+          <div class="calendar-weekdays">
+            <span>L</span><span>M</span><span>M</span><span>J</span><span>V</span><span>S</span><span>D</span>
+          </div>
+          <div id="calendarGrid" class="calendar-grid">
+            <!-- injecté par app.js -->
+          </div>
+          <div class="calendar-legend">
+            <span class="legend-item"><i class="legend-dot legend-green"></i>Objectifs atteints</span>
+            <span class="legend-item"><i class="legend-dot legend-amber"></i>Partiel</span>
+            <span class="legend-item"><i class="legend-dot legend-red"></i>Hors cible</span>
+          </div>
+        </div>
+
+      </div>
+
+      <div id="historyDetail" class="card detail-card" hidden>
+        <button type="button" id="detailBack" class="btn-ghost detail-back">← Retour à l'historique</button>
+
+        <div class="detail-header">
+          <h2 id="detailDate" class="card-title-sm"></h2>
+          <span id="detailValidatedChip" class="chip" hidden>Validée ✓</span>
+        </div>
+
+        <div class="gauges-grid" id="detailGauges">
+          <!-- injecté par app.js -->
+        </div>
+
+        <form id="detailFoodForm" class="detail-food-form">
+          <div class="field-grid field-grid-food">
+            <div class="field field-wide">
+              <label for="detailFoodName">Nom</label>
+              <input type="text" id="detailFoodName" placeholder="Ex : Blanc de poulet 150g" required>
+            </div>
+            <div class="field">
+              <label for="detailFoodKcal">Calories</label>
+              <input type="number" id="detailFoodKcal" min="0" step="1" required>
+            </div>
+            <div class="field">
+              <label for="detailFoodProtein">Protéines (g)</label>
+              <input type="number" id="detailFoodProtein" min="0" step="0.1" value="0">
+            </div>
+            <div class="field">
+              <label for="detailFoodFat">Lipides (g)</label>
+              <input type="number" id="detailFoodFat" min="0" step="0.1" value="0">
+            </div>
+            <div class="field">
+              <label for="detailFoodCarbs">Glucides (g)</label>
+              <input type="number" id="detailFoodCarbs" min="0" step="0.1" value="0">
+            </div>
+          </div>
+          <button type="submit" class="btn-primary">Ajouter à cette journée</button>
+        </form>
+
+        <ul id="detailFoodLog" class="food-log">
+          <!-- injecté par app.js -->
+        </ul>
+        <p id="detailLogEmpty" class="note">Aucun aliment enregistré ce jour-là.</p>
+
+        <div class="detail-actions">
+          <button type="button" id="detailValidate" class="btn-secondary">Valider cette journée</button>
+          <button type="button" id="detailDelete" class="btn-ghost detail-delete">Supprimer cette journée</button>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- ===================== ONGLET BILANS ===================== -->
+    <section id="panel-stats" class="panel" hidden>
+
+      <div id="statsEmpty" class="card empty-card" hidden>
+        <p>Pas encore assez de données. Reviens ici après quelques jours de suivi pour voir tes bilans.</p>
+      </div>
+
+      <div id="statsContent" hidden>
+
+        <div class="card stats-card">
+          <div class="stats-header">
+            <div>
+              <h2 class="card-title-sm">7 derniers jours</h2>
+              <span id="weekDaysLogged" class="stats-sub"></span>
+            </div>
+            <span id="weekRegularity" class="chip"></span>
+          </div>
+          <div class="gauges-grid" id="weekGauges">
+            <!-- injecté par app.js -->
+          </div>
+          <div class="stats-totals" id="weekTotals">
+            <!-- injecté par app.js -->
+          </div>
+        </div>
+
+        <div class="card stats-card">
+          <div class="stats-header">
+            <div>
+              <h2 class="card-title-sm">30 derniers jours</h2>
+              <span id="monthDaysLogged" class="stats-sub"></span>
+            </div>
+            <span id="monthRegularity" class="chip"></span>
+          </div>
+          <div class="gauges-grid" id="monthGauges">
+            <!-- injecté par app.js -->
+          </div>
+          <div class="stats-totals" id="monthTotals">
+            <!-- injecté par app.js -->
+          </div>
+        </div>
+
+      </div>
+
+    </section>
+
   </main>
 
   <footer class="app-footer">
@@ -192,6 +339,6 @@
 
 </div>
 
-<script src="./app.js?v=1" defer></script>
+<script src="./app.js?v=2" defer></script>
 </body>
 </html>

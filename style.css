@@ -102,16 +102,21 @@ main{ flex: 1; }
   border: 1px solid var(--border);
   border-radius: 999px;
   padding: 4px;
+  overflow-x: auto;
+  scrollbar-width: none;
 }
 
+.tabs::-webkit-scrollbar{ display: none; }
+
 .tab{
-  flex: 1;
+  flex: 0 0 auto;
+  white-space: nowrap;
   border: none;
   background: transparent;
   color: var(--text-muted);
-  padding: 10px 12px;
+  padding: 10px 14px;
   border-radius: 999px;
-  font-size: 13px;
+  font-size: 12.5px;
   font-weight: 700;
   letter-spacing: 0.02em;
   cursor: pointer;
@@ -190,6 +195,7 @@ main{ flex: 1; }
   color: #0b0d10;
   padding: 5px 10px;
   border-radius: 999px;
+  white-space: nowrap;
 }
 
 .chip-muted{
@@ -197,6 +203,9 @@ main{ flex: 1; }
   color: var(--text-muted);
   border: 1px solid var(--border);
 }
+
+.chip-red{ background: var(--red); color: #1a0505; }
+.chip-amber{ background: var(--amber); color: #1a1205; }
 
 /* =========================================================
    Forms
@@ -304,6 +313,11 @@ main{ flex: 1; }
   border: 1px solid var(--border);
   padding: 8px 12px;
   font-size: 12.5px;
+}
+
+.btn-secondary:disabled{
+  opacity: 0.5;
+  cursor: default;
 }
 
 /* =========================================================
@@ -486,6 +500,23 @@ main{ flex: 1; }
   letter-spacing: 0.04em;
 }
 
+/* small gauge variant used in stats cards where space is tighter */
+.gauge-sm .gauge-ring{ width: 74px; height: 74px; }
+.gauge-sm .gauge-ring-inner{ inset: 9px; }
+.gauge-sm .gauge-value{ font-size: 12px; }
+.gauge-sm .gauge-target{ font-size: 8.5px; }
+.gauge-sm .gauge-label{ font-size: 10.5px; }
+
+.validate-row{
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.validate-row .btn-secondary{ width: auto; flex: 1; }
+
 /* =========================================================
    Food log
    ========================================================= */
@@ -553,7 +584,7 @@ main{ flex: 1; }
   color: var(--text-muted);
 }
 
-.empty-card p{ margin: 0 0 14px; font-size: 14px; }
+.empty-card p{ margin: 0 0 14px; font-size: 14px; line-height: 1.5; }
 
 .app-footer{
   text-align: center;
@@ -564,6 +595,247 @@ main{ flex: 1; }
   font-size: 11px;
   color: var(--text-muted);
   line-height: 1.5;
+}
+
+/* =========================================================
+   Historique — list view
+   ========================================================= */
+
+.view-toggle-card{ padding: 6px; }
+.view-toggle-card .segmented{ border: none; }
+
+.list-card{ padding: 10px; }
+
+.history-list{
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.history-row{
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  text-align: left;
+  background: var(--surface-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  cursor: pointer;
+  color: var(--text);
+}
+
+.history-row:hover{ border-color: var(--border); }
+
+.status-dot{
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.status-dot.st-green{ background: var(--lime); }
+.status-dot.st-amber{ background: var(--amber); }
+.status-dot.st-red{ background: var(--red); }
+.status-dot.st-none{ background: var(--border); }
+
+.history-row .h-date{
+  flex: 1;
+  font-size: 13.5px;
+  font-weight: 700;
+}
+
+.history-row .h-sub{
+  display: block;
+  font-size: 11px;
+  color: var(--text-muted);
+  font-weight: 500;
+  margin-top: 2px;
+}
+
+.history-row .h-kcal{
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.history-row .h-check{
+  color: var(--lime);
+  font-size: 14px;
+}
+
+/* =========================================================
+   Historique — calendar view
+   ========================================================= */
+
+.calendar-card{ padding: 16px; }
+
+.calendar-nav{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.calendar-nav .btn-ghost{
+  padding: 6px 14px;
+  font-size: 16px;
+}
+
+.cal-label{
+  font-size: 14px;
+  font-weight: 800;
+  text-transform: capitalize;
+}
+
+.calendar-weekdays{
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+  margin-bottom: 6px;
+}
+
+.calendar-weekdays span{
+  text-align: center;
+  font-size: 10.5px;
+  color: var(--text-muted);
+  font-weight: 700;
+}
+
+.calendar-grid{
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+}
+
+.cal-cell{
+  aspect-ratio: 1;
+  border: none;
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  cursor: default;
+}
+
+.cal-cell.has-data{ cursor: pointer; }
+.cal-cell.cal-empty{ background: transparent; }
+
+.cal-cell.st-green{ background: rgba(198,255,61,0.22); color: var(--lime); font-weight: 700; }
+.cal-cell.st-amber{ background: rgba(255,184,79,0.2); color: var(--amber); font-weight: 700; }
+.cal-cell.st-red{ background: rgba(255,92,92,0.18); color: var(--red); font-weight: 700; }
+
+.cal-cell.is-today{ outline: 1.5px solid var(--cyan); }
+
+.calendar-legend{
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.legend-item{
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10.5px;
+  color: var(--text-muted);
+}
+
+.legend-dot{
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.legend-green{ background: var(--lime); }
+.legend-amber{ background: var(--amber); }
+.legend-red{ background: var(--red); }
+
+/* =========================================================
+   Historique — detail view
+   ========================================================= */
+
+.detail-back{ margin-bottom: 14px; }
+
+.detail-header{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.detail-food-form{ margin-top: 18px; }
+
+.detail-actions{
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.detail-delete{ width: 100%; color: var(--red); border-color: var(--border); }
+
+/* =========================================================
+   Bilans / Stats
+   ========================================================= */
+
+.stats-header{
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.stats-sub{
+  display: block;
+  font-size: 11px;
+  color: var(--text-muted);
+  font-weight: 600;
+  margin-top: 4px;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.stats-totals{
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.stat-total-cell{
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+}
+
+.stat-total-cell .st-label{
+  display: block;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+.stat-total-cell .st-value{
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 700;
 }
 
 /* =========================================================
