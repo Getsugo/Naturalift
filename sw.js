@@ -5,15 +5,15 @@
    sinon les anciens fichiers restent servis depuis le cache.
    ========================================================= */
 
-var CACHE_NAME = "naturalift-v2";
+var CACHE_NAME = "naturalift-v3";
 
 // Chemins relatifs uniquement : indispensable pour un déploiement
 // GitHub Pages sous <username>.github.io/<repo>/.
 var APP_SHELL = [
   "./",
   "./index.html",
-  "./style.css?v=2",
-  "./app.js?v=2",
+  "./style.css?v=3",
+  "./app.js?v=3",
   "./manifest.json"
 ];
 
@@ -62,8 +62,6 @@ self.addEventListener("fetch", function (event) {
 
   var url = request.url;
 
-  // Icônes / assets statiques : cache-first, ils ne changent jamais entre
-  // deux versions (nom de fichier stable).
   if (isStaticAsset(url)) {
     event.respondWith(
       caches.match(request).then(function (cached) {
@@ -78,8 +76,6 @@ self.addEventListener("fetch", function (event) {
     return;
   }
 
-  // App shell (HTML / CSS / JS) : network-first pour toujours servir la
-  // dernière version publiée, avec repli sur le cache hors-ligne.
   event.respondWith(
     fetch(request)
       .then(function (response) {

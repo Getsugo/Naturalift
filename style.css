@@ -95,9 +95,25 @@ main{ flex: 1; }
 
 .brand .accent{ color: var(--lime); }
 
+.tabs-scroll{
+  position: relative;
+}
+
+.tabs-scroll::after{
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 26px;
+  border-radius: 0 999px 999px 0;
+  background: linear-gradient(to right, transparent, var(--surface) 70%);
+  pointer-events: none;
+}
+
 .tabs{
   display: flex;
-  gap: 6px;
+  gap: 4px;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 999px;
@@ -114,11 +130,11 @@ main{ flex: 1; }
   border: none;
   background: transparent;
   color: var(--text-muted);
-  padding: 10px 14px;
+  padding: 9px 11px;
   border-radius: 999px;
-  font-size: 12.5px;
+  font-size: 12px;
   font-weight: 700;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.01em;
   cursor: pointer;
   transition: background 0.15s ease, color 0.15s ease;
 }
@@ -174,6 +190,8 @@ main{ flex: 1; }
   line-height: 1.5;
   margin: 0 0 18px;
 }
+
+.card-sub-sm{ font-size: 12px; margin: 4px 0 16px; }
 
 .note{
   font-size: 12.5px;
@@ -282,6 +300,8 @@ main{ flex: 1; }
   color: #0b0d10;
 }
 
+.mode-toggle{ margin-bottom: 16px; }
+
 .btn-primary, .btn-secondary, .btn-ghost{
   border: none;
   border-radius: var(--radius-sm);
@@ -299,6 +319,12 @@ main{ flex: 1; }
 }
 
 .btn-primary:active{ background: var(--lime-dim); }
+
+.btn-primary:disabled{
+  background: var(--surface-2);
+  color: var(--text-muted);
+  cursor: default;
+}
 
 .btn-secondary{
   background: var(--surface-2);
@@ -500,7 +526,6 @@ main{ flex: 1; }
   letter-spacing: 0.04em;
 }
 
-/* small gauge variant used in stats cards where space is tighter */
 .gauge-sm .gauge-ring{ width: 74px; height: 74px; }
 .gauge-sm .gauge-ring-inner{ inset: 9px; }
 .gauge-sm .gauge-value{ font-size: 12px; }
@@ -516,6 +541,47 @@ main{ flex: 1; }
 }
 
 .validate-row .btn-secondary{ width: auto; flex: 1; }
+
+/* =========================================================
+   Recherche d'aliment (base de données) — Suivi & Historique
+   ========================================================= */
+
+.food-preview{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  margin-bottom: 16px;
+}
+
+.food-preview .fp-name{
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.food-preview .fp-macros{
+  display: block;
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  margin-top: 3px;
+}
+
+.food-preview .fp-kcal{
+  font-family: var(--font-mono);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--lime);
+  white-space: nowrap;
+}
+
+.db-add-form .field{ margin-bottom: 4px; }
+.db-add-form .field-wide{ margin-bottom: 14px; }
+.db-add-form #foodGrams, .db-add-form #detailFoodGrams{ margin-bottom: 16px; }
 
 /* =========================================================
    Food log
@@ -663,11 +729,6 @@ main{ flex: 1; }
   color: var(--text-muted);
 }
 
-.history-row .h-check{
-  color: var(--lime);
-  font-size: 14px;
-}
-
 /* =========================================================
    Historique — calendar view
    ========================================================= */
@@ -776,7 +837,7 @@ main{ flex: 1; }
   margin-bottom: 16px;
 }
 
-.detail-food-form{ margin-top: 18px; }
+.detail-add-block{ margin: 18px 0; }
 
 .detail-actions{
   display: flex;
@@ -837,6 +898,93 @@ main{ flex: 1; }
   font-size: 13px;
   font-weight: 700;
 }
+
+/* =========================================================
+   Aliments — base de données
+   ========================================================= */
+
+.foods-search-card{ padding: 10px 14px; }
+
+.foods-search-card input{
+  width: 100%;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 12px;
+  font-size: 14px;
+}
+
+.foods-search-card input:focus{ outline: none; border-color: var(--lime); }
+
+.add-food-btn{ margin-bottom: 16px; }
+
+.edit-form-actions{
+  display: flex;
+  gap: 10px;
+}
+
+.edit-form-actions .btn-primary{ flex: 1; }
+.edit-form-actions .btn-ghost{ flex: 0 0 auto; }
+
+.foods-db-list{
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.food-db-row{
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+  padding: 11px 12px;
+}
+
+.fdb-info{ flex: 1; min-width: 0; }
+
+.fdb-name{
+  display: block;
+  font-size: 13.5px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fdb-macros{
+  display: block;
+  font-size: 10.5px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  margin-top: 2px;
+}
+
+.fdb-actions{
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.icon-btn{
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.icon-btn:hover{ color: var(--text); border-color: var(--text-muted); }
+.icon-btn.icon-danger:hover{ color: var(--red); border-color: var(--red); }
 
 /* =========================================================
    Responsive

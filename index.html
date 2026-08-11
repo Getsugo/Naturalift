@@ -10,7 +10,7 @@
 <link rel="manifest" href="./manifest.json">
 <link rel="icon" href="./icon-192.png">
 <link rel="apple-touch-icon" href="./icon-192.png">
-<link rel="stylesheet" href="./style.css?v=2">
+<link rel="stylesheet" href="./style.css?v=3">
 </head>
 <body>
 
@@ -21,13 +21,19 @@
       <span class="brand-dot" aria-hidden="true"></span>
       NATURA<span class="accent">LIFT</span>
     </div>
-    <nav class="tabs" role="tablist" aria-label="Navigation principale">
-      <button class="tab active" data-tab="calc" role="tab" aria-selected="true">Calculateur</button>
-      <button class="tab" data-tab="track" role="tab" aria-selected="false">Suivi</button>
-      <button class="tab" data-tab="history" role="tab" aria-selected="false">Historique</button>
-      <button class="tab" data-tab="stats" role="tab" aria-selected="false">Bilans</button>
-    </nav>
+    <div class="tabs-scroll">
+      <nav class="tabs" role="tablist" aria-label="Navigation principale">
+        <button class="tab active" data-tab="calc" role="tab" aria-selected="true">Calcul</button>
+        <button class="tab" data-tab="track" role="tab" aria-selected="false">Suivi</button>
+        <button class="tab" data-tab="history" role="tab" aria-selected="false">Historique</button>
+        <button class="tab" data-tab="stats" role="tab" aria-selected="false">Bilans</button>
+        <button class="tab" data-tab="foods" role="tab" aria-selected="false">Aliments</button>
+      </nav>
+    </div>
   </header>
+
+  <!-- Datalist partagée par les deux champs de recherche d'aliments (Suivi + Historique) -->
+  <datalist id="foodDatalist"></datalist>
 
   <main>
 
@@ -148,32 +154,58 @@
           </div>
         </div>
 
-        <form id="foodForm" class="card form-card">
+        <div class="card form-card">
           <h2 class="card-title-sm">Ajouter un aliment / repas</h2>
-          <div class="field-grid field-grid-food">
-            <div class="field field-wide">
-              <label for="foodName">Nom</label>
-              <input type="text" id="foodName" placeholder="Ex : Blanc de poulet 150g" required>
-            </div>
-            <div class="field">
-              <label for="foodKcal">Calories</label>
-              <input type="number" id="foodKcal" min="0" step="1" inputmode="numeric" required>
-            </div>
-            <div class="field">
-              <label for="foodProtein">Protéines (g)</label>
-              <input type="number" id="foodProtein" min="0" step="0.1" inputmode="decimal" value="0">
-            </div>
-            <div class="field">
-              <label for="foodFat">Lipides (g)</label>
-              <input type="number" id="foodFat" min="0" step="0.1" inputmode="decimal" value="0">
-            </div>
-            <div class="field">
-              <label for="foodCarbs">Glucides (g)</label>
-              <input type="number" id="foodCarbs" min="0" step="0.1" inputmode="decimal" value="0">
-            </div>
+
+          <div class="segmented mode-toggle" role="radiogroup" aria-label="Mode d'ajout">
+            <input type="radio" id="addModeDb" name="addMode" value="db" checked>
+            <label for="addModeDb" class="seg-btn">Ma base</label>
+            <input type="radio" id="addModeManual" name="addMode" value="manual">
+            <label for="addModeManual" class="seg-btn">Saisie manuelle</label>
           </div>
-          <button type="submit" class="btn-primary">Ajouter au journal</button>
-        </form>
+
+          <form id="dbAddForm" class="db-add-form">
+            <div class="field field-wide">
+              <label for="foodSearch">Rechercher un aliment</label>
+              <input type="text" id="foodSearch" list="foodDatalist" placeholder="Ex : Blanc de poulet" autocomplete="off">
+            </div>
+            <p id="foodNoMatch" class="note" hidden>Aucun aliment ne correspond exactement — choisis-le dans la liste ou bascule en saisie manuelle.</p>
+            <div id="foodPreview" class="food-preview" hidden>
+              <!-- injecté par app.js -->
+            </div>
+            <div class="field">
+              <label for="foodGrams">Quantité (g)</label>
+              <input type="number" id="foodGrams" min="1" step="1" value="100" inputmode="numeric">
+            </div>
+            <button type="submit" class="btn-primary" id="dbAddSubmit" disabled>Ajouter au journal</button>
+          </form>
+
+          <form id="foodForm" class="manual-add-form" hidden>
+            <div class="field-grid field-grid-food">
+              <div class="field field-wide">
+                <label for="foodName">Nom</label>
+                <input type="text" id="foodName" placeholder="Ex : Repas au restaurant" required>
+              </div>
+              <div class="field">
+                <label for="foodKcal">Calories</label>
+                <input type="number" id="foodKcal" min="0" step="1" inputmode="numeric" required>
+              </div>
+              <div class="field">
+                <label for="foodProtein">Protéines (g)</label>
+                <input type="number" id="foodProtein" min="0" step="0.1" inputmode="decimal" value="0">
+              </div>
+              <div class="field">
+                <label for="foodFat">Lipides (g)</label>
+                <input type="number" id="foodFat" min="0" step="0.1" inputmode="decimal" value="0">
+              </div>
+              <div class="field">
+                <label for="foodCarbs">Glucides (g)</label>
+                <input type="number" id="foodCarbs" min="0" step="0.1" inputmode="decimal" value="0">
+              </div>
+            </div>
+            <button type="submit" class="btn-primary">Ajouter au journal</button>
+          </form>
+        </div>
 
         <div class="card log-card">
           <div class="log-header">
@@ -247,31 +279,54 @@
           <!-- injecté par app.js -->
         </div>
 
-        <form id="detailFoodForm" class="detail-food-form">
-          <div class="field-grid field-grid-food">
-            <div class="field field-wide">
-              <label for="detailFoodName">Nom</label>
-              <input type="text" id="detailFoodName" placeholder="Ex : Blanc de poulet 150g" required>
-            </div>
-            <div class="field">
-              <label for="detailFoodKcal">Calories</label>
-              <input type="number" id="detailFoodKcal" min="0" step="1" required>
-            </div>
-            <div class="field">
-              <label for="detailFoodProtein">Protéines (g)</label>
-              <input type="number" id="detailFoodProtein" min="0" step="0.1" value="0">
-            </div>
-            <div class="field">
-              <label for="detailFoodFat">Lipides (g)</label>
-              <input type="number" id="detailFoodFat" min="0" step="0.1" value="0">
-            </div>
-            <div class="field">
-              <label for="detailFoodCarbs">Glucides (g)</label>
-              <input type="number" id="detailFoodCarbs" min="0" step="0.1" value="0">
-            </div>
+        <div class="detail-add-block">
+          <div class="segmented mode-toggle" role="radiogroup" aria-label="Mode d'ajout">
+            <input type="radio" id="detailAddModeDb" name="detailAddMode" value="db" checked>
+            <label for="detailAddModeDb" class="seg-btn">Ma base</label>
+            <input type="radio" id="detailAddModeManual" name="detailAddMode" value="manual">
+            <label for="detailAddModeManual" class="seg-btn">Saisie manuelle</label>
           </div>
-          <button type="submit" class="btn-primary">Ajouter à cette journée</button>
-        </form>
+
+          <form id="detailDbAddForm" class="db-add-form">
+            <div class="field field-wide">
+              <label for="detailFoodSearch">Rechercher un aliment</label>
+              <input type="text" id="detailFoodSearch" list="foodDatalist" placeholder="Ex : Blanc de poulet" autocomplete="off">
+            </div>
+            <p id="detailFoodNoMatch" class="note" hidden>Aucun aliment ne correspond exactement — choisis-le dans la liste ou bascule en saisie manuelle.</p>
+            <div id="detailFoodPreview" class="food-preview" hidden></div>
+            <div class="field">
+              <label for="detailFoodGrams">Quantité (g)</label>
+              <input type="number" id="detailFoodGrams" min="1" step="1" value="100" inputmode="numeric">
+            </div>
+            <button type="submit" class="btn-primary" id="detailDbAddSubmit" disabled>Ajouter à cette journée</button>
+          </form>
+
+          <form id="detailFoodForm" class="manual-add-form" hidden>
+            <div class="field-grid field-grid-food">
+              <div class="field field-wide">
+                <label for="detailFoodName">Nom</label>
+                <input type="text" id="detailFoodName" placeholder="Ex : Repas au restaurant" required>
+              </div>
+              <div class="field">
+                <label for="detailFoodKcal">Calories</label>
+                <input type="number" id="detailFoodKcal" min="0" step="1" required>
+              </div>
+              <div class="field">
+                <label for="detailFoodProtein">Protéines (g)</label>
+                <input type="number" id="detailFoodProtein" min="0" step="0.1" value="0">
+              </div>
+              <div class="field">
+                <label for="detailFoodFat">Lipides (g)</label>
+                <input type="number" id="detailFoodFat" min="0" step="0.1" value="0">
+              </div>
+              <div class="field">
+                <label for="detailFoodCarbs">Glucides (g)</label>
+                <input type="number" id="detailFoodCarbs" min="0" step="0.1" value="0">
+              </div>
+            </div>
+            <button type="submit" class="btn-primary">Ajouter à cette journée</button>
+          </form>
+        </div>
 
         <ul id="detailFoodLog" class="food-log">
           <!-- injecté par app.js -->
@@ -331,6 +386,56 @@
 
     </section>
 
+    <!-- ===================== ONGLET ALIMENTS (base de données) ===================== -->
+    <section id="panel-foods" class="panel" hidden>
+
+      <div class="card foods-search-card">
+        <input type="text" id="foodsFilter" placeholder="Rechercher dans ta base d'aliments...">
+      </div>
+
+      <button type="button" id="showAddFood" class="btn-primary add-food-btn">+ Ajouter un aliment</button>
+
+      <form id="foodEditForm" class="card form-card" hidden>
+        <h2 class="card-title-sm" id="foodEditTitle">Nouvel aliment</h2>
+        <p class="card-sub card-sub-sm">Valeurs nutritionnelles pour 100g.</p>
+        <div class="field-grid">
+          <div class="field field-wide">
+            <label for="editFoodName">Nom</label>
+            <input type="text" id="editFoodName" placeholder="Ex : Blanc de poulet" required>
+          </div>
+          <div class="field">
+            <label for="editFoodKcal">Calories /100g</label>
+            <input type="number" id="editFoodKcal" min="0" step="1" required>
+          </div>
+          <div class="field">
+            <label for="editFoodProtein">Protéines /100g</label>
+            <input type="number" id="editFoodProtein" min="0" step="0.1" required>
+          </div>
+          <div class="field">
+            <label for="editFoodFat">Lipides /100g</label>
+            <input type="number" id="editFoodFat" min="0" step="0.1" required>
+          </div>
+          <div class="field">
+            <label for="editFoodCarbs">Glucides /100g</label>
+            <input type="number" id="editFoodCarbs" min="0" step="0.1" required>
+          </div>
+        </div>
+        <input type="hidden" id="editFoodId" value="">
+        <div class="edit-form-actions">
+          <button type="submit" class="btn-primary">Enregistrer</button>
+          <button type="button" id="cancelFoodEdit" class="btn-ghost">Annuler</button>
+        </div>
+      </form>
+
+      <div class="card list-card">
+        <ul id="foodsDbList" class="foods-db-list">
+          <!-- injecté par app.js -->
+        </ul>
+        <p id="foodsDbEmpty" class="note" hidden>Aucun aliment ne correspond à ta recherche.</p>
+      </div>
+
+    </section>
+
   </main>
 
   <footer class="app-footer">
@@ -339,6 +444,6 @@
 
 </div>
 
-<script src="./app.js?v=2" defer></script>
+<script src="./app.js?v=3" defer></script>
 </body>
 </html>
