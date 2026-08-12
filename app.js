@@ -14,6 +14,7 @@
   var STORAGE_FOODS = "nl_foods_v1";       // [ { id, name, kcal, protein, fat, carbs } ] pour 100g
   var STORAGE_LOG_LEGACY = "nl_log_v1";    // ancienne version (migration)
   var MAX_HISTORY_DAYS = 400;              // ~13 mois, borne la taille du localStorage
+  var MAX_SUGGESTIONS = 8;
 
   /* ---------------------------------------------------------
      Constantes métier
@@ -214,6 +215,18 @@
     return null;
   }
 
+  function searchFoods(query, limit) {
+    var lower = query.trim().toLowerCase();
+    if (!lower) return [];
+    var foods = loadFoods().slice();
+    foods.sort(function (a, b) { return a.name.localeCompare(b.name, "fr"); });
+    var matches = [];
+    for (var i = 0; i < foods.length && matches.length < limit; i++) {
+      if (foods[i].name.toLowerCase().indexOf(lower) !== -1) matches.push(foods[i]);
+    }
+    return matches;
+  }
+
   function createFood(data) {
     var foods = loadFoods();
     var food = {
@@ -250,16 +263,6 @@
     }
     saveFoods(filtered);
     return filtered;
-  }
-
-  function refreshFoodDatalist() {
-    var foods = loadFoods().slice();
-    foods.sort(function (a, b) { return a.name.localeCompare(b.name, "fr"); });
-    var html = "";
-    for (var i = 0; i < foods.length; i++) {
-      html += '<option value="' + escapeHtml(foods[i].name) + '"></option>';
-    }
-    $("foodDatalist").innerHTML = html;
   }
 
   /* ---------------------------------------------------------
@@ -547,25 +550,31 @@
   /* ---------------------------------------------------------
      Ajout d'aliment générique — réutilisé par le Suivi et le
      détail d'une journée passée (base de données + saisie
-     manuelle), pour éviter de dupliquer la logique.
+     manuelle). Le choix d'un aliment se fait via un menu
+     déroulant HTML/CSS entièrement custom (pas de <datalist>,
+     dont le rendu natif sur Android est peu fiable et peut
+     s'afficher par-dessus le clavier).
      --------------------------------------------------------- */
 
   function setupFoodEntryUI(cfg) {
     // cfg = {
-    //   modeDb, modeManual,           radios
-    //   dbForm, manualForm,           <form> éléments
-    //   searchInput, noMatchEl, previewEl, gramsInput, dbSubmitBtn,
+    //   modeDb, modeManual,                     radios
+    //   dbForm, manualForm,                     <form> éléments
+    //   searchInput, suggestionsEl, noMatchEl, previewEl, gramsInput, dbSubmitBtn,
     //   manualFields: { name, kcal, protein, fat, carbs },
     //   getDateKey, onAdded
     // }
 
-    function currentMatch() {
+    var activeIndex = -1;
+    var currentMatches = [];
+
+    function currentExactMatch() {
       var foods = loadFoods();
       return findFoodByName(foods, cfg.searchInput.value);
     }
 
     function updatePreview() {
-      var match = currentMatch();
+      var match = currentExactMatch();
       if (!match) {
         cfg.previewEl.hidden = true;
         cfg.noMatchEl.hidden = cfg.searchInput.value.trim() === "";
@@ -582,7 +591,94 @@
       cfg.dbSubmitBtn.disabled = false;
     }
 
-    cfg.searchInput.addEventListener("input", updatePreview);
+    function hideSuggestions() {
+      cfg.suggestionsEl.hidden = true;
+      cfg.suggestionsEl.innerHTML = "";
+      activeIndex = -1;
+      currentMatches = [];
+    }
+
+    function highlightActive() {
+      var items = cfg.suggestionsEl.querySelectorAll(".autocomplete-item");
+      for (var i = 0; i < items.length; i++) {
+        items[i].classList.toggle("active", i === activeIndex);
+      }
+      if (items[activeIndex]) items[activeIndex].scrollIntoView({ block: "nearest" });
+    }
+
+    function selectMatch(food) {
+      cfg.searchInput.value = food.name;
+      hideSuggestions();
+      updatePreview();
+      cfg.gramsInput.focus();
+      cfg.gramsInput.select();
+    }
+
+    function renderSuggestions() {
+      var query = cfg.searchInput.value.trim();
+      if (!query) { hideSuggestions(); return; }
+
+      currentMatches = searchFoods(query, MAX_SUGGESTIONS);
+      if (currentMatches.length === 0) { hideSuggestions(); return; }
+
+      activeIndex = -1;
+      var html = "";
+      for (var i = 0; i < currentMatches.length; i++) {
+        var f = currentMatches[i];
+        html +=
+          '<div class="autocomplete-item" data-index="' + i + '">' +
+            escapeHtml(f.name) +
+            '<span class="ai-macros">' + f.kcal + ' kcal · P' + f.protein + ' L' + f.fat + ' G' + f.carbs + ' /100g</span>' +
+          '</div>';
+      }
+      cfg.suggestionsEl.innerHTML = html;
+      cfg.suggestionsEl.hidden = false;
+
+      var items = cfg.suggestionsEl.querySelectorAll(".autocomplete-item");
+      for (var j = 0; j < items.length; j++) {
+        // mousedown + preventDefault : évite que le champ perde le focus
+        // (et donc que le clavier se ferme) avant que le clic soit traité.
+        items[j].addEventListener("mousedown", function (ev) {
+          ev.preventDefault();
+          var idx = parseInt(ev.currentTarget.getAttribute("data-index"), 10);
+          selectMatch(currentMatches[idx]);
+        });
+      }
+    }
+
+    cfg.searchInput.addEventListener("input", function () {
+      updatePreview();
+      renderSuggestions();
+    });
+
+    cfg.searchInput.addEventListener("focus", function () {
+      if (cfg.searchInput.value.trim() !== "") renderSuggestions();
+    });
+
+    cfg.searchInput.addEventListener("blur", function () {
+      // délai court pour laisser le "mousedown" d'une suggestion s'exécuter
+      window.setTimeout(hideSuggestions, 150);
+    });
+
+    cfg.searchInput.addEventListener("keydown", function (ev) {
+      if (cfg.suggestionsEl.hidden) return;
+      if (ev.key === "ArrowDown") {
+        ev.preventDefault();
+        activeIndex = Math.min(activeIndex + 1, currentMatches.length - 1);
+        highlightActive();
+      } else if (ev.key === "ArrowUp") {
+        ev.preventDefault();
+        activeIndex = Math.max(activeIndex - 1, 0);
+        highlightActive();
+      } else if (ev.key === "Enter") {
+        if (activeIndex >= 0 && currentMatches[activeIndex]) {
+          ev.preventDefault();
+          selectMatch(currentMatches[activeIndex]);
+        }
+      } else if (ev.key === "Escape") {
+        hideSuggestions();
+      }
+    });
 
     cfg.modeDb.addEventListener("change", function () {
       cfg.dbForm.hidden = false;
@@ -591,11 +687,12 @@
     cfg.modeManual.addEventListener("change", function () {
       cfg.dbForm.hidden = true;
       cfg.manualForm.hidden = false;
+      hideSuggestions();
     });
 
     cfg.dbForm.addEventListener("submit", function (e) {
       e.preventDefault();
-      var match = currentMatch();
+      var match = currentExactMatch();
       if (!match) return;
       var grams = parseFloat(cfg.gramsInput.value) || 0;
       if (grams <= 0) return;
@@ -620,6 +717,7 @@
       cfg.previewEl.hidden = true;
       cfg.noMatchEl.hidden = true;
       cfg.dbSubmitBtn.disabled = true;
+      hideSuggestions();
       cfg.onAdded();
     });
 
@@ -1049,7 +1147,6 @@
         var confirmed = window.confirm("Supprimer cet aliment de ta base ? Les entrées déjà enregistrées dans ton journal ne seront pas modifiées.");
         if (!confirmed) return;
         deleteFoodRecord(id);
-        refreshFoodDatalist();
         refreshFoodsPanel();
       });
     }
@@ -1103,7 +1200,6 @@
     }
 
     closeFoodEditForm();
-    refreshFoodDatalist();
     refreshFoodsPanel();
   }
 
@@ -1148,7 +1244,6 @@
   function init() {
     migrateLegacyLog();
     loadFoods();
-    refreshFoodDatalist();
 
     $("calcForm").addEventListener("submit", handleCalcSubmit);
     $("resetDay").addEventListener("click", handleResetDay);
@@ -1160,6 +1255,7 @@
       dbForm: $("dbAddForm"),
       manualForm: $("foodForm"),
       searchInput: $("foodSearch"),
+      suggestionsEl: $("foodSuggestions"),
       noMatchEl: $("foodNoMatch"),
       previewEl: $("foodPreview"),
       gramsInput: $("foodGrams"),
@@ -1175,6 +1271,7 @@
       dbForm: $("detailDbAddForm"),
       manualForm: $("detailFoodForm"),
       searchInput: $("detailFoodSearch"),
+      suggestionsEl: $("detailFoodSuggestions"),
       noMatchEl: $("detailFoodNoMatch"),
       previewEl: $("detailFoodPreview"),
       gramsInput: $("detailFoodGrams"),

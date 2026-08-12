@@ -240,6 +240,8 @@ main{ flex: 1; }
 
 .field-wide{ grid-column: 1 / -1; }
 
+.field{ position: relative; }
+
 .field label{
   display: block;
   font-size: 12px;
@@ -543,8 +545,52 @@ main{ flex: 1; }
 .validate-row .btn-secondary{ width: auto; flex: 1; }
 
 /* =========================================================
-   Recherche d'aliment (base de données) — Suivi & Historique
+   Recherche d'aliment — menu déroulant personnalisé
+   (remplace <datalist>, dont le rendu natif sur Android est
+   peu fiable : mauvais positionnement, passe au-dessus du
+   clavier. Ici tout est du HTML/CSS ordinaire, donc prévisible.)
    ========================================================= */
+
+.autocomplete-wrap{ position: relative; }
+
+.autocomplete-list{
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  margin-top: 4px;
+  z-index: 30;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  max-height: 240px;
+  overflow-y: auto;
+  box-shadow: 0 12px 28px rgba(0,0,0,0.45);
+}
+
+.autocomplete-item{
+  padding: 10px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border);
+}
+
+.autocomplete-item:last-child{ border-bottom: none; }
+
+.autocomplete-item:hover,
+.autocomplete-item.active{
+  background: var(--surface);
+}
+
+.autocomplete-item .ai-macros{
+  display: block;
+  font-size: 10.5px;
+  font-weight: 500;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  margin-top: 2px;
+}
 
 .food-preview{
   display: flex;
