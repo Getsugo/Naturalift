@@ -659,11 +659,13 @@ form.scan-result.food-preview{
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-bottom: 12px;
+  margin-bottom: 8px;
 }
 
 .scan-name-input{
   flex: 1;
+  min-width: 0; /* empêche l'input de forcer la largeur du flex et de pousser
+                   la puce "Open Food Facts" hors de l'écran */
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -673,7 +675,16 @@ form.scan-result.food-preview{
   color: var(--text);
 }
 
+.scan-result-header .chip{ flex-shrink: 0; }
+
 .scan-name-input:focus{ outline: none; border-color: var(--lime); }
+
+.scan-name-hint{
+  font-size: 10.5px;
+  color: var(--text-muted);
+  line-height: 1.4;
+  margin: 0 0 12px;
+}
 
 .scan-macro-grid{
   display: grid;

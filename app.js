@@ -901,11 +901,18 @@
         scan.gramsInput.value = "100";
         scan.saveToDbCheckbox.checked = true;
         scan.form.setAttribute("data-barcode", result.barcode);
+        if (scan.barcodeLabelEl) scan.barcodeLabelEl.textContent = result.barcode;
 
         var looksEmpty = result.kcal === 0 && result.protein === 0 && result.fat === 0 && result.carbs === 0;
         scan.incompleteEl.hidden = !looksEmpty;
 
         scan.form.hidden = false;
+
+        // Le nom vient d'une base communautaire et est parfois erroné
+        // (mauvaise association code-barres ↔ produit) : on sélectionne le
+        // texte pour que corriger soit aussi simple que de se mettre à taper.
+        scan.nameInput.focus();
+        scan.nameInput.select();
       });
     }
 
@@ -1512,7 +1519,8 @@
         carbsInput: $("scanCarbs"),
         gramsInput: $("scanGrams"),
         saveToDbCheckbox: $("scanSaveToDb"),
-        incompleteEl: $("scanIncomplete")
+        incompleteEl: $("scanIncomplete"),
+        barcodeLabelEl: $("scanBarcodeLabel")
       },
       getDateKey: function () { var r = ensureTodayRecord(); return r ? r.date : null; },
       onAdded: refreshTracker
@@ -1546,7 +1554,8 @@
         carbsInput: $("detailScanCarbs"),
         gramsInput: $("detailScanGrams"),
         saveToDbCheckbox: $("detailScanSaveToDb"),
-        incompleteEl: $("detailScanIncomplete")
+        incompleteEl: $("detailScanIncomplete"),
+        barcodeLabelEl: $("detailScanBarcodeLabel")
       },
       getDateKey: function () { return historyState.currentDetailKey; },
       onAdded: function () { renderHistoryDetail(historyState.currentDetailKey); }

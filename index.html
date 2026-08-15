@@ -10,7 +10,7 @@
 <link rel="manifest" href="./manifest.json">
 <link rel="icon" href="./icon-192.png">
 <link rel="apple-touch-icon" href="./icon-192.png">
-<link rel="stylesheet" href="./style.css?v=5">
+<link rel="stylesheet" href="./style.css?v=6">
 </head>
 <body>
 
@@ -194,6 +194,7 @@
                 <input type="text" id="scanProductName" class="scan-name-input" placeholder="Nom du produit">
                 <span class="chip chip-muted">Open Food Facts</span>
               </div>
+              <p class="scan-name-hint">Nom fourni par la base communautaire Open Food Facts (code <span id="scanBarcodeLabel"></span>) — corrige-le si besoin, il peut être erroné pour certains produits.</p>
               <p id="scanIncomplete" class="note" hidden>Valeurs nutritionnelles incomplètes sur Open Food Facts — vérifie/corrige avant d'ajouter.</p>
               <div class="scan-macro-grid">
                 <label class="scan-macro-field">Kcal /100g<input type="number" id="scanKcal" min="0" step="1"></label>
@@ -351,6 +352,7 @@
                 <input type="text" id="detailScanProductName" class="scan-name-input" placeholder="Nom du produit">
                 <span class="chip chip-muted">Open Food Facts</span>
               </div>
+              <p class="scan-name-hint">Nom fourni par la base communautaire Open Food Facts (code <span id="detailScanBarcodeLabel"></span>) — corrige-le si besoin, il peut être erroné pour certains produits.</p>
               <p id="detailScanIncomplete" class="note" hidden>Valeurs nutritionnelles incomplètes sur Open Food Facts — vérifie/corrige avant d'ajouter.</p>
               <div class="scan-macro-grid">
                 <label class="scan-macro-field">Kcal /100g<input type="number" id="detailScanKcal" min="0" step="1"></label>
@@ -530,6 +532,6 @@
      si une connexion internet est disponible ; l'app détecte son absence et
      bascule proprement sur un message d'indisponibilité sinon). -->
 <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js" defer></script>
-<script src="./app.js?v=5" defer></script>
+<script src="./app.js?v=6" defer></script>
 </body>
 </html>
