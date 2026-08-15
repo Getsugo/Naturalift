@@ -1,9 +1,11 @@
 /* =========================================================
    NaturaLift — app.js
    Calculateur nutritionnel + suivi quotidien + historique long
-   terme + bilans hebdo/mensuels + base d'aliments réutilisables.
-   Vanilla JS, aucune dépendance. Compatible anciens navigateurs
-   Android (pas d'optional chaining ni de nullish coalescing).
+   terme + bilans hebdo/mensuels + base d'aliments réutilisables
+   + scanner de code-barres (Open Food Facts).
+   Vanilla JS, aucune dépendance de build. Compatible anciens
+   navigateurs Android (pas d'optional chaining ni de nullish
+   coalescing).
    ========================================================= */
 
 (function () {
@@ -15,6 +17,7 @@
   var STORAGE_LOG_LEGACY = "nl_log_v1";    // ancienne version (migration)
   var MAX_HISTORY_DAYS = 400;              // ~13 mois, borne la taille du localStorage
   var MAX_SUGGESTIONS = 8;
+  var OFF_API_BASE = "https://world.openfoodfacts.org/api/v0/product/";
 
   /* ---------------------------------------------------------
      Constantes métier
@@ -263,6 +266,138 @@
     }
     saveFoods(filtered);
     return filtered;
+  }
+
+  /* ---------------------------------------------------------
+     Open Food Facts — recherche par code-barres
+     --------------------------------------------------------- */
+
+  function lookupOpenFoodFacts(barcode, onDone) {
+    var url = OFF_API_BASE + encodeURIComponent(barcode) + ".json";
+
+    fetch(url)
+      .then(function (response) {
+        if (!response.ok) throw new Error("http-" + response.status);
+        return response.json();
+      })
+      .then(function (data) {
+        if (!data || data.status !== 1 || !data.product) {
+          onDone({ found: false, barcode: barcode });
+          return;
+        }
+
+        var p = data.product;
+        var nutr = p.nutriments || {};
+
+        var name = p.product_name || p.product_name_fr || p.generic_name || ("Produit " + barcode);
+
+        var kcal = nutr["energy-kcal_100g"];
+        if (kcal === undefined || kcal === null) {
+          var kj = nutr["energy_100g"];
+          kcal = (kj !== undefined && kj !== null) ? (kj / 4.184) : 0;
+        }
+
+        onDone({
+          found: true,
+          barcode: barcode,
+          name: name,
+          kcal: round(kcal || 0),
+          protein: round1(nutr["proteins_100g"] || 0),
+          fat: round1(nutr["fat_100g"] || 0),
+          carbs: round1(nutr["carbohydrates_100g"] || 0)
+        });
+      })
+      .catch(function () {
+        onDone({ found: false, barcode: barcode, networkError: true });
+      });
+  }
+
+  /* ---------------------------------------------------------
+     Scanner caméra — overlay partagé (une seule session à la fois)
+     Utilise la bibliothèque html5-qrcode chargée via CDN. Si elle
+     n'est pas disponible (pas de réseau, bloquée, etc.) ou si la
+     caméra est refusée/absente, un message clair est affiché et
+     l'utilisateur peut basculer sur la saisie manuelle.
+     --------------------------------------------------------- */
+
+  var scannerState = { instance: null, active: false, onResult: null };
+
+  function showScannerError(msg) {
+    $("scannerHint").hidden = true;
+    $("scannerError").hidden = false;
+    $("scannerError").textContent = msg;
+  }
+
+  function stopScannerCamera() {
+    if (scannerState.instance && scannerState.active) {
+      scannerState.active = false;
+      scannerState.instance.stop().then(function () {
+        try { scannerState.instance.clear(); } catch (e) { /* noop */ }
+      }).catch(function () { /* déjà arrêté */ });
+    }
+  }
+
+  function closeScanner() {
+    stopScannerCamera();
+    $("scannerOverlay").hidden = true;
+  }
+
+  function openScanner(onBarcodeFound) {
+    scannerState.onResult = onBarcodeFound;
+    $("scannerOverlay").hidden = false;
+    $("scannerHint").hidden = false;
+    $("scannerError").hidden = true;
+    $("scannerReader").innerHTML = "";
+
+    if (!window.isSecureContext) {
+      showScannerError("Le scanner nécessite une connexion sécurisée (HTTPS). Impossible d'accéder à la caméra ici.");
+      return;
+    }
+    if (typeof Html5Qrcode === "undefined") {
+      showScannerError("Scanner indisponible : la bibliothèque de lecture n'a pas pu être chargée. Vérifie ta connexion internet et réessaie.");
+      return;
+    }
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      showScannerError("Caméra non disponible sur cet appareil ou ce navigateur.");
+      return;
+    }
+
+    var scanConfig = { fps: 10, qrbox: { width: 260, height: 160 } };
+    if (typeof Html5QrcodeSupportedFormats !== "undefined") {
+      scanConfig.formatsToSupport = [
+        Html5QrcodeSupportedFormats.EAN_13,
+        Html5QrcodeSupportedFormats.EAN_8,
+        Html5QrcodeSupportedFormats.UPC_A,
+        Html5QrcodeSupportedFormats.UPC_E,
+        Html5QrcodeSupportedFormats.CODE_128
+      ];
+    }
+
+    scannerState.instance = new Html5Qrcode("scannerReader");
+    scannerState.active = true;
+
+    scannerState.instance.start(
+      { facingMode: "environment" },
+      scanConfig,
+      function (decodedText) {
+        stopScannerCamera();
+        $("scannerOverlay").hidden = true;
+        if (scannerState.onResult) scannerState.onResult(decodedText);
+      },
+      function () { /* aucune détection sur cette frame : normal, on ignore */ }
+    ).catch(function (err) {
+      scannerState.active = false;
+      var str = (err && err.toString) ? err.toString() : String(err);
+      var msg = "Impossible d'accéder à la caméra.";
+      if (str.indexOf("NotAllowedError") !== -1 || str.indexOf("Permission") !== -1) {
+        msg = "Accès à la caméra refusé. Autorise la caméra dans les paramètres de ton navigateur pour scanner un produit.";
+      } else if (str.indexOf("NotFoundError") !== -1) {
+        msg = "Aucune caméra détectée sur cet appareil.";
+      } else if (str.indexOf("NotReadableError") !== -1) {
+        msg = "La caméra est déjà utilisée par une autre application.";
+      }
+      showScannerError(msg);
+    });
   }
 
   /* ---------------------------------------------------------
@@ -549,24 +684,30 @@
 
   /* ---------------------------------------------------------
      Ajout d'aliment générique — réutilisé par le Suivi et le
-     détail d'une journée passée (base de données + saisie
-     manuelle). Le choix d'un aliment se fait via un menu
-     déroulant HTML/CSS entièrement custom (pas de <datalist>,
-     dont le rendu natif sur Android est peu fiable et peut
-     s'afficher par-dessus le clavier).
+     détail d'une journée passée. Trois sous-modes partagent le
+     même sélecteur segmenté : base de données (recherche +
+     autocomplétion custom), scanner (caméra + Open Food Facts)
+     et saisie manuelle.
      --------------------------------------------------------- */
 
   function setupFoodEntryUI(cfg) {
     // cfg = {
-    //   modeDb, modeManual,                     radios
-    //   dbForm, manualForm,                     <form> éléments
+    //   modeDb, modeScan, modeManual,           radios
+    //   dbForm, scanPanel, manualForm,          conteneurs des 3 modes
     //   searchInput, suggestionsEl, noMatchEl, previewEl, gramsInput, dbSubmitBtn,
     //   manualFields: { name, kcal, protein, fat, carbs },
+    //   scan: {
+    //     openBtn, statusEl, notFoundEl, notFoundMsgEl, useManualBtn,
+    //     form, nameInput, kcalInput, proteinInput, fatInput, carbsInput,
+    //     gramsInput, saveToDbCheckbox, incompleteEl
+    //   },
     //   getDateKey, onAdded
     // }
 
     var activeIndex = -1;
     var currentMatches = [];
+
+    /* ---------- Mode "Ma base" (recherche + autocomplétion) ---------- */
 
     function currentExactMatch() {
       var foods = loadFoods();
@@ -636,8 +777,6 @@
 
       var items = cfg.suggestionsEl.querySelectorAll(".autocomplete-item");
       for (var j = 0; j < items.length; j++) {
-        // mousedown + preventDefault : évite que le champ perde le focus
-        // (et donc que le clavier se ferme) avant que le clic soit traité.
         items[j].addEventListener("mousedown", function (ev) {
           ev.preventDefault();
           var idx = parseInt(ev.currentTarget.getAttribute("data-index"), 10);
@@ -650,16 +789,12 @@
       updatePreview();
       renderSuggestions();
     });
-
     cfg.searchInput.addEventListener("focus", function () {
       if (cfg.searchInput.value.trim() !== "") renderSuggestions();
     });
-
     cfg.searchInput.addEventListener("blur", function () {
-      // délai court pour laisser le "mousedown" d'une suggestion s'exécuter
       window.setTimeout(hideSuggestions, 150);
     });
-
     cfg.searchInput.addEventListener("keydown", function (ev) {
       if (cfg.suggestionsEl.hidden) return;
       if (ev.key === "ArrowDown") {
@@ -678,16 +813,6 @@
       } else if (ev.key === "Escape") {
         hideSuggestions();
       }
-    });
-
-    cfg.modeDb.addEventListener("change", function () {
-      cfg.dbForm.hidden = false;
-      cfg.manualForm.hidden = true;
-    });
-    cfg.modeManual.addEventListener("change", function () {
-      cfg.dbForm.hidden = true;
-      cfg.manualForm.hidden = false;
-      hideSuggestions();
     });
 
     cfg.dbForm.addEventListener("submit", function (e) {
@@ -721,6 +846,8 @@
       cfg.onAdded();
     });
 
+    /* ---------- Mode "Manuel" ---------- */
+
     cfg.manualForm.addEventListener("submit", function (e) {
       e.preventDefault();
       var entry = {
@@ -739,6 +866,113 @@
       cfg.manualForm.reset();
       cfg.onAdded();
     });
+
+    /* ---------- Mode "Scanner" ---------- */
+
+    var scan = cfg.scan;
+
+    function resetScanPanel() {
+      scan.statusEl.hidden = true;
+      scan.notFoundEl.hidden = true;
+      scan.form.hidden = true;
+    }
+
+    function handleBarcode(barcode) {
+      resetScanPanel();
+      scan.statusEl.hidden = false;
+      scan.statusEl.textContent = "Recherche du produit (code " + barcode + ")…";
+
+      lookupOpenFoodFacts(barcode, function (result) {
+        scan.statusEl.hidden = true;
+
+        if (!result.found) {
+          scan.notFoundEl.hidden = false;
+          scan.notFoundMsgEl.textContent = result.networkError ?
+            "Impossible de contacter Open Food Facts — vérifie ta connexion internet." :
+            "Produit introuvable dans Open Food Facts (code-barres : " + result.barcode + ").";
+          return;
+        }
+
+        scan.nameInput.value = result.name;
+        scan.kcalInput.value = result.kcal;
+        scan.proteinInput.value = result.protein;
+        scan.fatInput.value = result.fat;
+        scan.carbsInput.value = result.carbs;
+        scan.gramsInput.value = "100";
+        scan.saveToDbCheckbox.checked = true;
+        scan.form.setAttribute("data-barcode", result.barcode);
+
+        var looksEmpty = result.kcal === 0 && result.protein === 0 && result.fat === 0 && result.carbs === 0;
+        scan.incompleteEl.hidden = !looksEmpty;
+
+        scan.form.hidden = false;
+      });
+    }
+
+    scan.openBtn.addEventListener("click", function () {
+      resetScanPanel();
+      openScanner(handleBarcode);
+    });
+
+    scan.useManualBtn.addEventListener("click", function () {
+      resetScanPanel();
+      cfg.modeManual.checked = true;
+      cfg.modeManual.dispatchEvent(new Event("change"));
+    });
+
+    scan.form.addEventListener("submit", function (e) {
+      e.preventDefault();
+      var grams = parseFloat(scan.gramsInput.value) || 0;
+      if (grams <= 0) return;
+      var factor = grams / 100;
+
+      var name = scan.nameInput.value.trim();
+      if (!name) return;
+      var per100 = {
+        kcal: parseFloat(scan.kcalInput.value) || 0,
+        protein: parseFloat(scan.proteinInput.value) || 0,
+        fat: parseFloat(scan.fatInput.value) || 0,
+        carbs: parseFloat(scan.carbsInput.value) || 0
+      };
+
+      var entry = {
+        name: name,
+        kcal: round(per100.kcal * factor),
+        protein: round1(per100.protein * factor),
+        fat: round1(per100.fat * factor),
+        carbs: round1(per100.carbs * factor),
+        grams: grams,
+        barcode: scan.form.getAttribute("data-barcode") || null
+      };
+
+      var dateKey = cfg.getDateKey();
+      if (!dateKey) return;
+      addFoodToDay(dateKey, entry);
+
+      if (scan.saveToDbCheckbox.checked) {
+        var existing = findFoodByName(loadFoods(), name);
+        if (!existing) {
+          createFood({ name: name, kcal: per100.kcal, protein: per100.protein, fat: per100.fat, carbs: per100.carbs });
+        }
+      }
+
+      resetScanPanel();
+      cfg.onAdded();
+    });
+
+    /* ---------- Bascule entre les 3 modes ---------- */
+
+    function showMode(mode) {
+      cfg.dbForm.hidden = mode !== "db";
+      cfg.scanPanel.hidden = mode !== "scan";
+      cfg.manualForm.hidden = mode !== "manual";
+      if (mode !== "db") hideSuggestions();
+      if (mode !== "scan") resetScanPanel();
+    }
+
+    cfg.modeDb.addEventListener("change", function () { showMode("db"); });
+    cfg.modeScan.addEventListener("change", function () { showMode("scan"); });
+    cfg.modeManual.addEventListener("change", function () { showMode("manual"); });
   }
 
   /* ---------------------------------------------------------
@@ -1248,11 +1482,14 @@
     $("calcForm").addEventListener("submit", handleCalcSubmit);
     $("resetDay").addEventListener("click", handleResetDay);
     $("validateDay").addEventListener("click", handleValidateDay);
+    $("scannerClose").addEventListener("click", closeScanner);
 
     setupFoodEntryUI({
       modeDb: $("addModeDb"),
+      modeScan: $("addModeScan"),
       modeManual: $("addModeManual"),
       dbForm: $("dbAddForm"),
+      scanPanel: $("scanAddPanel"),
       manualForm: $("foodForm"),
       searchInput: $("foodSearch"),
       suggestionsEl: $("foodSuggestions"),
@@ -1261,14 +1498,32 @@
       gramsInput: $("foodGrams"),
       dbSubmitBtn: $("dbAddSubmit"),
       manualFields: { name: $("foodName"), kcal: $("foodKcal"), protein: $("foodProtein"), fat: $("foodFat"), carbs: $("foodCarbs") },
+      scan: {
+        openBtn: $("openScannerBtn"),
+        statusEl: $("scanStatus"),
+        notFoundEl: $("scanNotFound"),
+        notFoundMsgEl: $("scanNotFoundMsg"),
+        useManualBtn: $("scanUseManual"),
+        form: $("scanAddForm"),
+        nameInput: $("scanProductName"),
+        kcalInput: $("scanKcal"),
+        proteinInput: $("scanProtein"),
+        fatInput: $("scanFat"),
+        carbsInput: $("scanCarbs"),
+        gramsInput: $("scanGrams"),
+        saveToDbCheckbox: $("scanSaveToDb"),
+        incompleteEl: $("scanIncomplete")
+      },
       getDateKey: function () { var r = ensureTodayRecord(); return r ? r.date : null; },
       onAdded: refreshTracker
     });
 
     setupFoodEntryUI({
       modeDb: $("detailAddModeDb"),
+      modeScan: $("detailAddModeScan"),
       modeManual: $("detailAddModeManual"),
       dbForm: $("detailDbAddForm"),
+      scanPanel: $("detailScanAddPanel"),
       manualForm: $("detailFoodForm"),
       searchInput: $("detailFoodSearch"),
       suggestionsEl: $("detailFoodSuggestions"),
@@ -1277,6 +1532,22 @@
       gramsInput: $("detailFoodGrams"),
       dbSubmitBtn: $("detailDbAddSubmit"),
       manualFields: { name: $("detailFoodName"), kcal: $("detailFoodKcal"), protein: $("detailFoodProtein"), fat: $("detailFoodFat"), carbs: $("detailFoodCarbs") },
+      scan: {
+        openBtn: $("detailOpenScannerBtn"),
+        statusEl: $("detailScanStatus"),
+        notFoundEl: $("detailScanNotFound"),
+        notFoundMsgEl: $("detailScanNotFoundMsg"),
+        useManualBtn: $("detailScanUseManual"),
+        form: $("detailScanAddForm"),
+        nameInput: $("detailScanProductName"),
+        kcalInput: $("detailScanKcal"),
+        proteinInput: $("detailScanProtein"),
+        fatInput: $("detailScanFat"),
+        carbsInput: $("detailScanCarbs"),
+        gramsInput: $("detailScanGrams"),
+        saveToDbCheckbox: $("detailScanSaveToDb"),
+        incompleteEl: $("detailScanIncomplete")
+      },
       getDateKey: function () { return historyState.currentDetailKey; },
       onAdded: function () { renderHistoryDetail(historyState.currentDetailKey); }
     });

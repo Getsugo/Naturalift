@@ -304,6 +304,8 @@ main{ flex: 1; }
 
 .mode-toggle{ margin-bottom: 16px; }
 
+.mode-toggle-3 .seg-btn{ padding: 11px 4px; font-size: 12.5px; }
+
 .btn-primary, .btn-secondary, .btn-ghost{
   border: none;
   border-radius: var(--radius-sm);
@@ -628,6 +630,170 @@ main{ flex: 1; }
 .db-add-form .field{ margin-bottom: 4px; }
 .db-add-form .field-wide{ margin-bottom: 14px; }
 .db-add-form #foodGrams, .db-add-form #detailFoodGrams{ margin-bottom: 16px; }
+
+/* =========================================================
+   Scanner de code-barres
+   ========================================================= */
+
+.scan-open-btn{ margin-bottom: 4px; }
+
+.scan-not-found{
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.scan-not-found .btn-secondary{ width: 100%; }
+
+/* Le résultat scanné réutilise .food-preview mais en colonne, car il
+   contient plusieurs champs éditables plutôt qu'une seule ligne. */
+form.scan-result.food-preview{
+  flex-direction: column;
+  align-items: stretch;
+  margin-top: 14px;
+  padding: 14px;
+}
+
+.scan-result-header{
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.scan-name-input{
+  flex: 1;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.scan-name-input:focus{ outline: none; border-color: var(--lime); }
+
+.scan-macro-grid{
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.scan-macro-field{
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.scan-macro-field input{
+  display: block;
+  width: 100%;
+  margin-top: 5px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 9px 10px;
+  font-size: 13.5px;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text);
+}
+
+.scan-macro-field input:focus{ outline: none; border-color: var(--lime); }
+
+.checkbox-row{
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12.5px;
+  color: var(--text-muted);
+  font-weight: 600;
+  margin: 4px 0 16px;
+}
+
+.checkbox-row input[type="checkbox"]{
+  width: 18px;
+  height: 18px;
+  accent-color: var(--lime);
+  flex-shrink: 0;
+}
+
+/* Overlay caméra plein écran */
+
+.scanner-overlay{
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: rgba(5,6,8,0.92);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.scanner-box{
+  width: 100%;
+  max-width: 420px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 16px;
+}
+
+.scanner-header{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.scanner-close{
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.scanner-reader{
+  width: 100%;
+  min-height: 220px;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: #000;
+}
+
+.scanner-reader video{
+  border-radius: var(--radius-md);
+}
+
+.scanner-hint{
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 12px 0 0;
+}
+
+.scanner-error-note{
+  border-left-color: var(--red);
+  margin-top: 12px;
+}
 
 /* =========================================================
    Food log
@@ -1040,6 +1206,7 @@ main{ flex: 1; }
   .gauges-grid{ grid-template-columns: 1fr 1fr; }
   .kcal-number{ font-size: 36px; }
   .period-table{ grid-template-columns: 1fr 1fr; }
+  .scan-macro-grid{ grid-template-columns: 1fr 1fr; }
 }
 
 @media (min-width: 640px){

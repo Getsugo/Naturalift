@@ -10,7 +10,7 @@
 <link rel="manifest" href="./manifest.json">
 <link rel="icon" href="./icon-192.png">
 <link rel="apple-touch-icon" href="./icon-192.png">
-<link rel="stylesheet" href="./style.css?v=4">
+<link rel="stylesheet" href="./style.css?v=5">
 </head>
 <body>
 
@@ -154,11 +154,13 @@
         <div class="card form-card">
           <h2 class="card-title-sm">Ajouter un aliment / repas</h2>
 
-          <div class="segmented mode-toggle" role="radiogroup" aria-label="Mode d'ajout">
+          <div class="segmented mode-toggle mode-toggle-3" role="radiogroup" aria-label="Mode d'ajout">
             <input type="radio" id="addModeDb" name="addMode" value="db" checked>
             <label for="addModeDb" class="seg-btn">Ma base</label>
+            <input type="radio" id="addModeScan" name="addMode" value="scan">
+            <label for="addModeScan" class="seg-btn">Scanner</label>
             <input type="radio" id="addModeManual" name="addMode" value="manual">
-            <label for="addModeManual" class="seg-btn">Saisie manuelle</label>
+            <label for="addModeManual" class="seg-btn">Manuel</label>
           </div>
 
           <form id="dbAddForm" class="db-add-form">
@@ -177,6 +179,39 @@
             </div>
             <button type="submit" class="btn-primary" id="dbAddSubmit" disabled>Ajouter au journal</button>
           </form>
+
+          <div id="scanAddPanel" class="scan-add-panel" hidden>
+            <button type="button" id="openScannerBtn" class="btn-primary scan-open-btn">📷 Scanner un produit</button>
+            <p id="scanStatus" class="note" hidden></p>
+
+            <div id="scanNotFound" class="note scan-not-found" hidden>
+              <span id="scanNotFoundMsg"></span>
+              <button type="button" id="scanUseManual" class="btn-secondary">Basculer en saisie manuelle</button>
+            </div>
+
+            <form id="scanAddForm" class="scan-result food-preview" hidden>
+              <div class="scan-result-header">
+                <input type="text" id="scanProductName" class="scan-name-input" placeholder="Nom du produit">
+                <span class="chip chip-muted">Open Food Facts</span>
+              </div>
+              <p id="scanIncomplete" class="note" hidden>Valeurs nutritionnelles incomplètes sur Open Food Facts — vérifie/corrige avant d'ajouter.</p>
+              <div class="scan-macro-grid">
+                <label class="scan-macro-field">Kcal /100g<input type="number" id="scanKcal" min="0" step="1"></label>
+                <label class="scan-macro-field">Protéines /100g<input type="number" id="scanProtein" min="0" step="0.1"></label>
+                <label class="scan-macro-field">Lipides /100g<input type="number" id="scanFat" min="0" step="0.1"></label>
+                <label class="scan-macro-field">Glucides /100g<input type="number" id="scanCarbs" min="0" step="0.1"></label>
+              </div>
+              <div class="field">
+                <label for="scanGrams">Quantité consommée (g)</label>
+                <input type="number" id="scanGrams" min="1" step="1" value="100" inputmode="numeric">
+              </div>
+              <label class="checkbox-row">
+                <input type="checkbox" id="scanSaveToDb" checked>
+                Enregistrer ce produit dans ma base d'aliments
+              </label>
+              <button type="submit" class="btn-primary" id="scanAddSubmit">Ajouter au journal</button>
+            </form>
+          </div>
 
           <form id="foodForm" class="manual-add-form" hidden>
             <div class="field-grid field-grid-food">
@@ -278,11 +313,13 @@
         </div>
 
         <div class="detail-add-block">
-          <div class="segmented mode-toggle" role="radiogroup" aria-label="Mode d'ajout">
+          <div class="segmented mode-toggle mode-toggle-3" role="radiogroup" aria-label="Mode d'ajout">
             <input type="radio" id="detailAddModeDb" name="detailAddMode" value="db" checked>
             <label for="detailAddModeDb" class="seg-btn">Ma base</label>
+            <input type="radio" id="detailAddModeScan" name="detailAddMode" value="scan">
+            <label for="detailAddModeScan" class="seg-btn">Scanner</label>
             <input type="radio" id="detailAddModeManual" name="detailAddMode" value="manual">
-            <label for="detailAddModeManual" class="seg-btn">Saisie manuelle</label>
+            <label for="detailAddModeManual" class="seg-btn">Manuel</label>
           </div>
 
           <form id="detailDbAddForm" class="db-add-form">
@@ -299,6 +336,39 @@
             </div>
             <button type="submit" class="btn-primary" id="detailDbAddSubmit" disabled>Ajouter à cette journée</button>
           </form>
+
+          <div id="detailScanAddPanel" class="scan-add-panel" hidden>
+            <button type="button" id="detailOpenScannerBtn" class="btn-primary scan-open-btn">📷 Scanner un produit</button>
+            <p id="detailScanStatus" class="note" hidden></p>
+
+            <div id="detailScanNotFound" class="note scan-not-found" hidden>
+              <span id="detailScanNotFoundMsg"></span>
+              <button type="button" id="detailScanUseManual" class="btn-secondary">Basculer en saisie manuelle</button>
+            </div>
+
+            <form id="detailScanAddForm" class="scan-result food-preview" hidden>
+              <div class="scan-result-header">
+                <input type="text" id="detailScanProductName" class="scan-name-input" placeholder="Nom du produit">
+                <span class="chip chip-muted">Open Food Facts</span>
+              </div>
+              <p id="detailScanIncomplete" class="note" hidden>Valeurs nutritionnelles incomplètes sur Open Food Facts — vérifie/corrige avant d'ajouter.</p>
+              <div class="scan-macro-grid">
+                <label class="scan-macro-field">Kcal /100g<input type="number" id="detailScanKcal" min="0" step="1"></label>
+                <label class="scan-macro-field">Protéines /100g<input type="number" id="detailScanProtein" min="0" step="0.1"></label>
+                <label class="scan-macro-field">Lipides /100g<input type="number" id="detailScanFat" min="0" step="0.1"></label>
+                <label class="scan-macro-field">Glucides /100g<input type="number" id="detailScanCarbs" min="0" step="0.1"></label>
+              </div>
+              <div class="field">
+                <label for="detailScanGrams">Quantité consommée (g)</label>
+                <input type="number" id="detailScanGrams" min="1" step="1" value="100" inputmode="numeric">
+              </div>
+              <label class="checkbox-row">
+                <input type="checkbox" id="detailScanSaveToDb" checked>
+                Enregistrer ce produit dans ma base d'aliments
+              </label>
+              <button type="submit" class="btn-primary" id="detailScanAddSubmit">Ajouter à cette journée</button>
+            </form>
+          </div>
 
           <form id="detailFoodForm" class="manual-add-form" hidden>
             <div class="field-grid field-grid-food">
@@ -443,6 +513,23 @@
 
 </div>
 
-<script src="./app.js?v=4" defer></script>
+<!-- ===================== SCANNER (overlay caméra partagé) ===================== -->
+<div id="scannerOverlay" class="scanner-overlay" hidden>
+  <div class="scanner-box">
+    <div class="scanner-header">
+      <span>Scanner un code-barres</span>
+      <button type="button" id="scannerClose" class="scanner-close" aria-label="Fermer le scanner">×</button>
+    </div>
+    <div id="scannerReader" class="scanner-reader"></div>
+    <p id="scannerHint" class="scanner-hint">Cadre le code-barres du produit dans la zone ci-dessus.</p>
+    <p id="scannerError" class="note scanner-error-note" hidden></p>
+  </div>
+</div>
+
+<!-- Bibliothèque de lecture de codes-barres via la caméra (CDN, chargée uniquement
+     si une connexion internet est disponible ; l'app détecte son absence et
+     bascule proprement sur un message d'indisponibilité sinon). -->
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js" defer></script>
+<script src="./app.js?v=5" defer></script>
 </body>
 </html>

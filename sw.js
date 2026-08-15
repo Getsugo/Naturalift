@@ -5,15 +5,15 @@
    sinon les anciens fichiers restent servis depuis le cache.
    ========================================================= */
 
-var CACHE_NAME = "naturalift-v4";
+var CACHE_NAME = "naturalift-v5";
 
 // Chemins relatifs uniquement : indispensable pour un déploiement
 // GitHub Pages sous <username>.github.io/<repo>/.
 var APP_SHELL = [
   "./",
   "./index.html",
-  "./style.css?v=4",
-  "./app.js?v=4",
+  "./style.css?v=5",
+  "./app.js?v=5",
   "./manifest.json"
 ];
 
@@ -62,6 +62,17 @@ self.addEventListener("fetch", function (event) {
 
   var url = request.url;
 
+  // Requêtes externes (bibliothèque du scanner sur unpkg.com, API Open
+  // Food Facts) : elles ne font pas partie de l'app shell et nécessitent
+  // une connexion réseau de toute façon. On laisse le navigateur les
+  // gérer normalement, sans interception ni repli sur index.html — sinon
+  // un fetch JSON échoué en offline renverrait la page HTML par erreur.
+  if (url.indexOf(self.location.origin) !== 0) {
+    return;
+  }
+
+  // Icônes / assets statiques : cache-first, ils ne changent jamais entre
+  // deux versions (nom de fichier stable).
   if (isStaticAsset(url)) {
     event.respondWith(
       caches.match(request).then(function (cached) {
@@ -76,6 +87,8 @@ self.addEventListener("fetch", function (event) {
     return;
   }
 
+  // App shell (HTML / CSS / JS) : network-first pour toujours servir la
+  // dernière version publiée, avec repli sur le cache hors-ligne.
   event.respondWith(
     fetch(request)
       .then(function (response) {
