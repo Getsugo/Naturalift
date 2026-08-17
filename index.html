@@ -10,7 +10,7 @@
 <link rel="manifest" href="./manifest.json">
 <link rel="icon" href="./icon-192.png">
 <link rel="apple-touch-icon" href="./icon-192.png">
-<link rel="stylesheet" href="./style.css?v=6">
+<link rel="stylesheet" href="./style.css?v=8">
 </head>
 <body>
 
@@ -27,6 +27,7 @@
         <button class="tab" data-tab="track" role="tab" aria-selected="false">Suivi</button>
         <button class="tab" data-tab="history" role="tab" aria-selected="false">Historique</button>
         <button class="tab" data-tab="stats" role="tab" aria-selected="false">Bilans</button>
+        <button class="tab" data-tab="weight" role="tab" aria-selected="false">Poids</button>
         <button class="tab" data-tab="foods" role="tab" aria-selected="false">Aliments</button>
       </nav>
     </div>
@@ -145,10 +146,43 @@
           <div class="gauges-grid" id="gaugesGrid">
             <!-- injecté par app.js -->
           </div>
+          <div class="daytype-row">
+            <span class="daytype-label">Type de journée</span>
+            <div class="segmented daytype-toggle" role="radiogroup" aria-label="Type de journée">
+              <input type="radio" id="dayTypeRest" name="dayType" value="rest">
+              <label for="dayTypeRest" class="seg-btn">Repos</label>
+              <input type="radio" id="dayTypeNeutral" name="dayType" value="neutral" checked>
+              <label for="dayTypeNeutral" class="seg-btn">—</label>
+              <input type="radio" id="dayTypeTraining" name="dayType" value="training">
+              <label for="dayTypeTraining" class="seg-btn">Entraînement</label>
+            </div>
+            <p class="daytype-hint">Ajuste légèrement les glucides (et donc les calories) à la hausse un jour d'entraînement, à la baisse un jour de repos.</p>
+          </div>
           <div class="validate-row">
             <span id="validatedChip" class="chip" hidden>Journée validée ✓</span>
             <button type="button" id="validateDay" class="btn-secondary">Valider la journée</button>
           </div>
+        </div>
+
+        <div class="card hydration-card">
+          <div class="hydration-header">
+            <h2 class="card-title-sm">Hydratation</h2>
+            <span id="hydrationValue" class="chip chip-muted"></span>
+          </div>
+          <div class="hydration-bar-wrap">
+            <div class="hydration-bar"><div id="hydrationBarFill" class="hydration-bar-fill"></div></div>
+          </div>
+          <div class="hydration-actions">
+            <button type="button" id="hydrationMinus" class="btn-ghost hydration-btn">− 250 ml</button>
+            <button type="button" id="hydrationPlus" class="btn-primary hydration-btn">+ 250 ml</button>
+          </div>
+        </div>
+
+        <div id="favoritesCard" class="card favorites-card" hidden>
+          <h2 class="card-title-sm">Repas favoris</h2>
+          <ul id="favoritesList" class="favorites-list">
+            <!-- injecté par app.js -->
+          </ul>
         </div>
 
         <div class="card form-card">
@@ -161,6 +195,11 @@
             <label for="addModeScan" class="seg-btn">Scanner</label>
             <input type="radio" id="addModeManual" name="addMode" value="manual">
             <label for="addModeManual" class="seg-btn">Manuel</label>
+          </div>
+
+          <div id="frequentFoods" class="frequent-foods" hidden>
+            <span class="frequent-label">Fréquents :</span>
+            <div id="frequentFoodsList" class="frequent-chips"></div>
           </div>
 
           <form id="dbAddForm" class="db-add-form">
@@ -237,6 +276,14 @@
                 <input type="number" id="foodCarbs" min="0" step="0.1" inputmode="decimal" value="0">
               </div>
             </div>
+            <div class="photo-attach">
+              <input type="file" accept="image/*" capture="environment" id="foodPhotoInput" hidden>
+              <button type="button" id="foodPhotoBtn" class="btn-ghost photo-btn">📷 Ajouter une photo</button>
+              <div id="foodPhotoPreview" class="photo-preview" hidden>
+                <img id="foodPhotoImg" alt="Photo du repas">
+                <button type="button" id="foodPhotoRemove" class="photo-remove" aria-label="Retirer la photo">×</button>
+              </div>
+            </div>
             <button type="submit" class="btn-primary">Ajouter au journal</button>
           </form>
         </div>
@@ -250,6 +297,7 @@
             <!-- injecté par app.js -->
           </ul>
           <p id="logEmpty" class="note">Aucun aliment enregistré aujourd'hui.</p>
+          <button type="button" id="saveAsFavorite" class="btn-secondary save-favorite-btn" hidden>☆ Enregistrer ce journal comme repas favori</button>
         </div>
 
       </div>
@@ -311,6 +359,18 @@
 
         <div class="gauges-grid" id="detailGauges">
           <!-- injecté par app.js -->
+        </div>
+
+        <div class="daytype-row">
+          <span class="daytype-label">Type de journée</span>
+          <div class="segmented daytype-toggle" role="radiogroup" aria-label="Type de journée">
+            <input type="radio" id="detailDayTypeRest" name="detailDayType" value="rest">
+            <label for="detailDayTypeRest" class="seg-btn">Repos</label>
+            <input type="radio" id="detailDayTypeNeutral" name="detailDayType" value="neutral" checked>
+            <label for="detailDayTypeNeutral" class="seg-btn">—</label>
+            <input type="radio" id="detailDayTypeTraining" name="detailDayType" value="training">
+            <label for="detailDayTypeTraining" class="seg-btn">Entraînement</label>
+          </div>
         </div>
 
         <div class="detail-add-block">
@@ -395,6 +455,14 @@
                 <input type="number" id="detailFoodCarbs" min="0" step="0.1" value="0">
               </div>
             </div>
+            <div class="photo-attach">
+              <input type="file" accept="image/*" capture="environment" id="detailFoodPhotoInput" hidden>
+              <button type="button" id="detailFoodPhotoBtn" class="btn-ghost photo-btn">📷 Ajouter une photo</button>
+              <div id="detailFoodPhotoPreview" class="photo-preview" hidden>
+                <img id="detailFoodPhotoImg" alt="Photo du repas">
+                <button type="button" id="detailFoodPhotoRemove" class="photo-remove" aria-label="Retirer la photo">×</button>
+              </div>
+            </div>
             <button type="submit" class="btn-primary">Ajouter à cette journée</button>
           </form>
         </div>
@@ -457,6 +525,103 @@
 
     </section>
 
+    <!-- ===================== ONGLET POIDS ===================== -->
+    <section id="panel-weight" class="panel" hidden>
+
+      <div class="card weight-log-card">
+        <h2 class="card-title-sm">Pesée du jour</h2>
+        <form id="weightForm" class="weight-form">
+          <div class="field field-wide">
+            <label for="weightInput">Poids (kg)</label>
+            <input type="number" id="weightInput" min="30" max="300" step="0.1" inputmode="decimal" placeholder="Ex : 78.4" required>
+          </div>
+          <button type="submit" class="btn-primary" id="weightSubmitBtn">Enregistrer</button>
+        </form>
+        <p class="note weight-tip">Pèse-toi si possible à jeun, au réveil, dans les mêmes conditions — les variations d'un jour à l'autre (eau, digestion) sont normales et n'ont pas de sens isolément. Regarde la tendance, pas le chiffre du jour.</p>
+      </div>
+
+      <div id="weightEmpty" class="card empty-card" hidden>
+        <p>Aucune pesée enregistrée pour le moment. Ajoute ton poids du jour ci-dessus pour démarrer le suivi.</p>
+      </div>
+
+      <div id="weightContent" hidden>
+
+        <div class="card weight-stats-card">
+          <div class="weight-stats-grid" id="weightStatsGrid">
+            <!-- injecté par app.js -->
+          </div>
+        </div>
+
+        <div class="card weight-chart-card">
+          <div class="weight-chart-header">
+            <h2 class="card-title-sm">Évolution (30 derniers jours)</h2>
+            <div class="chart-legend">
+              <span class="legend-item"><i class="legend-dot legend-dot-raw"></i>Pesée</span>
+              <span class="legend-item"><i class="legend-dot legend-dot-trend"></i>Tendance (moy. 7j)</span>
+            </div>
+          </div>
+          <div id="weightChart" class="weight-chart">
+            <!-- injecté par app.js (SVG) -->
+          </div>
+        </div>
+
+        <div id="weightSuggestion" class="card suggestion-card" hidden>
+          <div class="suggestion-header">
+            <span class="suggestion-icon">💡</span>
+            <h2 class="card-title-sm">Suggestion d'ajustement</h2>
+          </div>
+          <p id="weightSuggestionText" class="suggestion-text"></p>
+          <button type="button" id="weightGoToCalc" class="btn-secondary">Ajuster mes calories →</button>
+        </div>
+
+        <div class="card list-card">
+          <div class="log-header">
+            <h2 class="card-title-sm">Historique des pesées</h2>
+          </div>
+          <ul id="weightList" class="weight-list">
+            <!-- injecté par app.js -->
+          </ul>
+        </div>
+
+      </div>
+
+      <div class="card measurements-card">
+        <h2 class="card-title-sm">Mensurations</h2>
+        <p class="card-sub card-sub-sm">Facultatif — utile pour suivre une recomposition corporelle même quand le poids bouge peu.</p>
+        <form id="measurementsForm" class="field-grid">
+          <div class="field">
+            <label for="measWaist">Taille (cm)</label>
+            <input type="number" id="measWaist" min="0" step="0.1" inputmode="decimal">
+          </div>
+          <div class="field">
+            <label for="measChest">Poitrine (cm)</label>
+            <input type="number" id="measChest" min="0" step="0.1" inputmode="decimal">
+          </div>
+          <div class="field">
+            <label for="measHips">Hanches (cm)</label>
+            <input type="number" id="measHips" min="0" step="0.1" inputmode="decimal">
+          </div>
+          <div class="field">
+            <label for="measArm">Bras (cm)</label>
+            <input type="number" id="measArm" min="0" step="0.1" inputmode="decimal">
+          </div>
+          <div class="field">
+            <label for="measThigh">Cuisse (cm)</label>
+            <input type="number" id="measThigh" min="0" step="0.1" inputmode="decimal">
+          </div>
+          <button type="submit" class="btn-primary field-wide">Enregistrer les mensurations du jour</button>
+        </form>
+
+        <div id="measurementsTrends" class="measurements-trends"></div>
+
+        <ul id="measurementsList" class="weight-list measurements-list">
+          <!-- injecté par app.js -->
+        </ul>
+        <p id="measurementsEmpty" class="note" hidden>Aucune mensuration enregistrée pour le moment.</p>
+      </div>
+
+    </section>
+
     <!-- ===================== ONGLET ALIMENTS (base de données) ===================== -->
     <section id="panel-foods" class="panel" hidden>
 
@@ -505,6 +670,26 @@
         <p id="foodsDbEmpty" class="note" hidden>Aucun aliment ne correspond à ta recherche.</p>
       </div>
 
+      <div class="card favorites-manage-card">
+        <h2 class="card-title-sm">Repas favoris</h2>
+        <p class="card-sub card-sub-sm">Depuis l'onglet Suivi, utilise "Enregistrer ce journal comme repas favori" sous ton journal du jour pour en créer un nouveau.</p>
+        <ul id="favoritesManageList" class="foods-db-list">
+          <!-- injecté par app.js -->
+        </ul>
+        <p id="favoritesManageEmpty" class="note" hidden>Aucun repas favori pour le moment.</p>
+      </div>
+
+      <div class="card backup-card">
+        <h2 class="card-title-sm">Sauvegarde de tes données</h2>
+        <p class="card-sub card-sub-sm">Tout est stocké uniquement sur cet appareil (localStorage) : un changement de téléphone ou un vidage du cache efface tes données. Exporte régulièrement une copie.</p>
+        <div class="backup-actions">
+          <button type="button" id="exportDataBtn" class="btn-secondary">⬇ Exporter mes données</button>
+          <button type="button" id="importDataBtn" class="btn-secondary">⬆ Importer une sauvegarde</button>
+          <input type="file" id="importDataFile" accept="application/json,.json" hidden>
+        </div>
+        <p id="backupStatus" class="note" hidden></p>
+      </div>
+
     </section>
 
   </main>
@@ -532,6 +717,6 @@
      si une connexion internet est disponible ; l'app détecte son absence et
      bascule proprement sur un message d'indisponibilité sinon). -->
 <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js" defer></script>
-<script src="./app.js?v=6" defer></script>
+<script src="./app.js?v=8" defer></script>
 </body>
 </html>

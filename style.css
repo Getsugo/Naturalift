@@ -1210,6 +1210,381 @@ form.scan-result.food-preview{
 .icon-btn.icon-danger:hover{ color: var(--red); border-color: var(--red); }
 
 /* =========================================================
+   Poids — saisie, graphique, suggestion, historique
+   ========================================================= */
+
+.weight-form{
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.weight-form .field{ flex: 1; margin-bottom: 0; }
+.weight-form .btn-primary{ width: auto; flex: 0 0 auto; padding: 12px 20px; }
+
+.weight-tip{ margin-top: 16px; }
+
+.weight-stats-grid{
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+
+.weight-stat-cell{
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+  padding: 12px 10px;
+  text-align: center;
+}
+
+.weight-stat-cell .ws-label{
+  display: block;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.weight-stat-cell .ws-value{
+  font-family: var(--font-mono);
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.weight-stat-cell .ws-value.ws-down{ color: var(--cyan); }
+.weight-stat-cell .ws-value.ws-up{ color: var(--amber); }
+.weight-stat-cell .ws-value.ws-flat{ color: var(--text-muted); }
+
+.weight-chart-header{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.chart-legend{
+  display: flex;
+  gap: 12px;
+}
+
+.legend-dot-raw{ background: var(--text-muted); }
+.legend-dot-trend{ background: var(--lime); }
+
+.weight-chart{
+  width: 100%;
+  overflow: hidden;
+}
+
+.weight-chart svg{ display: block; width: 100%; height: auto; }
+
+.weight-chart-empty{
+  text-align: center;
+  font-size: 12.5px;
+  color: var(--text-muted);
+  padding: 30px 0;
+}
+
+.suggestion-card{ border-color: var(--lime); }
+
+.suggestion-header{
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.suggestion-icon{ font-size: 16px; }
+
+.suggestion-text{
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text);
+  margin: 0 0 16px;
+}
+
+.weight-list{
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.weight-row{
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+}
+
+.weight-row .wr-date{
+  flex: 1;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.weight-row .wr-value{
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--lime);
+}
+
+.weight-row .wr-del{
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 4px 6px;
+}
+
+.weight-row .wr-del:hover{ color: var(--red); }
+
+/* =========================================================
+   Type de journée (repos / entraînement)
+   ========================================================= */
+
+.daytype-row{ margin-top: 16px; }
+
+.daytype-label{
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+
+.daytype-toggle .seg-btn{ padding: 10px 6px; font-size: 12.5px; }
+
+.daytype-hint{
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.5;
+  margin: 8px 0 0;
+}
+
+/* =========================================================
+   Hydratation
+   ========================================================= */
+
+.hydration-header{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.hydration-bar-wrap{ margin-bottom: 14px; }
+
+.hydration-bar{
+  width: 100%;
+  height: 14px;
+  background: var(--surface-2);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.hydration-bar-fill{
+  height: 100%;
+  width: 0%;
+  background: var(--cyan);
+  border-radius: 999px;
+  transition: width 0.3s ease;
+}
+
+.hydration-actions{
+  display: flex;
+  gap: 10px;
+}
+
+.hydration-btn{ flex: 1; width: auto; }
+
+/* =========================================================
+   Repas favoris
+   ========================================================= */
+
+.favorites-list{
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.favorite-row{
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  text-align: left;
+  background: var(--surface-2);
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  cursor: pointer;
+  color: var(--text);
+}
+
+.favorite-row .fav-icon{ font-size: 15px; }
+
+.favorite-row .fav-name{
+  flex: 1;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.favorite-row .fav-sub{
+  display: block;
+  font-size: 11px;
+  color: var(--text-muted);
+  font-weight: 500;
+  margin-top: 2px;
+}
+
+.favorite-row .fav-kcal{
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--lime);
+  font-weight: 700;
+}
+
+.save-favorite-btn{ margin-top: 12px; }
+
+/* =========================================================
+   Aliments fréquents (chips rapides)
+   ========================================================= */
+
+.frequent-foods{ margin-bottom: 16px; }
+
+.frequent-label{
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+
+.frequent-chips{
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.frequent-chip{
+  flex: 0 0 auto;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 8px 14px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.frequent-chip:hover{ border-color: var(--lime); }
+
+/* =========================================================
+   Photo de repas
+   ========================================================= */
+
+.photo-attach{ margin: 4px 0 16px; }
+
+.photo-btn{ width: 100%; }
+
+.photo-preview{
+  position: relative;
+  display: inline-block;
+  margin-top: 10px;
+}
+
+.photo-preview img{
+  width: 84px;
+  height: 84px;
+  object-fit: cover;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  display: block;
+}
+
+.photo-remove{
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--red);
+  color: #1a0505;
+  border: 2px solid var(--bg);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.food-thumb{
+  width: 40px;
+  height: 40px;
+  object-fit: cover;
+  border-radius: 6px;
+  flex-shrink: 0;
+}
+
+/* =========================================================
+   Mensurations
+   ========================================================= */
+
+.measurements-card .field-grid{ margin-top: 14px; }
+
+.measurements-trends{
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 4px 0 16px;
+}
+
+.measurements-trends .mt-chip{
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+}
+
+.measurements-list .weight-row .wr-date{ flex: 0 0 auto; min-width: 64px; }
+.measurements-list .weight-row .wr-value{ flex: 1; font-size: 11.5px; color: var(--text); font-weight: 600; }
+
+/* =========================================================
+   Sauvegarde — export / import
+   ========================================================= */
+
+.backup-actions{
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* =========================================================
    Responsive
    ========================================================= */
 
@@ -1218,6 +1593,9 @@ form.scan-result.food-preview{
   .kcal-number{ font-size: 36px; }
   .period-table{ grid-template-columns: 1fr 1fr; }
   .scan-macro-grid{ grid-template-columns: 1fr 1fr; }
+  .weight-stats-grid{ grid-template-columns: 1fr 1fr; }
+  .weight-form{ flex-direction: column; align-items: stretch; }
+  .weight-form .btn-primary{ width: 100%; }
 }
 
 @media (min-width: 640px){

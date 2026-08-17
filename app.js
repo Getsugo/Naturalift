@@ -14,6 +14,10 @@
   var STORAGE_PROFILE = "nl_profile_v1";
   var STORAGE_HISTORY = "nl_history_v1";   // { "YYYY-MM-DD": dayRecord }
   var STORAGE_FOODS = "nl_foods_v1";       // [ { id, name, kcal, protein, fat, carbs } ] pour 100g
+  var STORAGE_WEIGHTS = "nl_weights_v1";   // [ { date, weight } ]
+  var STORAGE_MEASUREMENTS = "nl_measurements_v1"; // [ { date, waist?, chest?, hips?, arm?, thigh? } ]
+  var STORAGE_FAVORITES = "nl_favorites_v1";       // [ { id, name, items: [...] } ]
+  var STORAGE_USAGE = "nl_food_usage_v1";          // { foodId: count }
   var STORAGE_LOG_LEGACY = "nl_log_v1";    // ancienne version (migration)
   var MAX_HISTORY_DAYS = 400;              // ~13 mois, borne la taille du localStorage
   var MAX_SUGGESTIONS = 8;
@@ -221,8 +225,13 @@
   function searchFoods(query, limit) {
     var lower = query.trim().toLowerCase();
     if (!lower) return [];
+    var usage = loadUsage();
     var foods = loadFoods().slice();
-    foods.sort(function (a, b) { return a.name.localeCompare(b.name, "fr"); });
+    foods.sort(function (a, b) {
+      var ua = usage[a.id] || 0, ub = usage[b.id] || 0;
+      if (ub !== ua) return ub - ua; // les plus utilisés d'abord
+      return a.name.localeCompare(b.name, "fr");
+    });
     var matches = [];
     for (var i = 0; i < foods.length && matches.length < limit; i++) {
       if (foods[i].name.toLowerCase().indexOf(lower) !== -1) matches.push(foods[i]);
@@ -266,6 +275,712 @@
     }
     saveFoods(filtered);
     return filtered;
+  }
+
+  /* ---------------------------------------------------------
+     Poids — stockage, statistiques, graphique, suggestion
+     d'ajustement calorique basée sur la tendance réelle.
+     --------------------------------------------------------- */
+
+  // Cible indicative de variation hebdomadaire (% du poids corporel),
+  // repères usuels pour un pratiquant naturel.
+  var OBJECTIVE_WEEKLY_TARGET_PCT = {
+    seche: -0.5,
+    prise: 0.3,
+    maintien: 0,
+    recomp: 0
+  };
+  var KCAL_PER_KG = 7700; // approximation usuelle 1 kg de tissu ≈ 7700 kcal
+
+  function loadWeights() {
+    var w = readJSON(STORAGE_WEIGHTS);
+    var arr = w || [];
+    arr.sort(function (a, b) { return a.date < b.date ? -1 : (a.date > b.date ? 1 : 0); });
+    return arr;
+  }
+
+  function saveWeights(arr) { writeJSON(STORAGE_WEIGHTS, arr); }
+
+  function upsertWeight(date, weight) {
+    var arr = loadWeights();
+    var found = false;
+    for (var i = 0; i < arr.length; i++) {
+      if (arr[i].date === date) { arr[i].weight = weight; found = true; break; }
+    }
+    if (!found) arr.push({ date: date, weight: weight });
+    saveWeights(arr);
+  }
+
+  function deleteWeight(date) {
+    var arr = loadWeights().filter(function (w) { return w.date !== date; });
+    saveWeights(arr);
+  }
+
+  function computeWeightStats(sorted) {
+    if (sorted.length === 0) return null;
+    var latest = sorted[sorted.length - 1];
+    var today = new Date();
+
+    function findClosestBefore(daysAgo) {
+      var targetTime = addDays(today, -daysAgo).getTime();
+      var best = null;
+      for (var i = 0; i < sorted.length; i++) {
+        if (parseDateKey(sorted[i].date).getTime() <= targetTime) best = sorted[i];
+      }
+      return best;
+    }
+
+    var ref7 = findClosestBefore(7);
+    var ref30 = findClosestBefore(30);
+
+    return {
+      current: latest.weight,
+      currentDate: latest.date,
+      change7: ref7 && ref7.date !== latest.date ? round1(latest.weight - ref7.weight) : null,
+      change30: ref30 && ref30.date !== latest.date ? round1(latest.weight - ref30.weight) : null
+    };
+  }
+
+  function renderWeightStats(stats) {
+    function cell(label, value) {
+      var display = value === null ? "—" : (value > 0 ? "+" : "") + value + " kg";
+      var cls = "ws-value";
+      if (value !== null) cls += value < -0.05 ? " ws-down" : (value > 0.05 ? " ws-up" : " ws-flat");
+      return '<div class="weight-stat-cell"><span class="ws-label">' + label + '</span><span class="' + cls + '">' + display + '</span></div>';
+    }
+    var html =
+      '<div class="weight-stat-cell"><span class="ws-label">Actuel</span><span class="ws-value">' + stats.current + ' kg</span></div>' +
+      cell("7 jours", stats.change7) +
+      cell("30 jours", stats.change30);
+    $("weightStatsGrid").innerHTML = html;
+  }
+
+  function buildWeightChartSvg(entries) {
+    if (entries.length < 2) {
+      return '<p class="weight-chart-empty">Ajoute au moins deux pesées pour voir apparaître un graphique.</p>';
+    }
+
+    var W = 320, H = 150, padL = 34, padR = 10, padT = 10, padB = 10;
+    var chartW = W - padL - padR;
+    var chartH = H - padT - padB;
+
+    var dates = entries.map(function (e) { return parseDateKey(e.date).getTime(); });
+    var minDate = Math.min.apply(null, dates);
+    var maxDate = Math.max.apply(null, dates);
+    var spanDate = (maxDate - minDate) || 1;
+
+    var weights = entries.map(function (e) { return e.weight; });
+    var minW = Math.min.apply(null, weights);
+    var maxW = Math.max.apply(null, weights);
+    if (minW === maxW) { minW -= 1; maxW += 1; }
+    var pad = (maxW - minW) * 0.18;
+    minW -= pad; maxW += pad;
+    var spanW = maxW - minW;
+
+    function xAt(date) { return padL + ((date - minDate) / spanDate) * chartW; }
+    function yAt(w) { return padT + chartH - ((w - minW) / spanW) * chartH; }
+
+    var trendPts = [];
+    for (var i = 0; i < entries.length; i++) {
+      var start = Math.max(0, i - 6);
+      var slice = entries.slice(start, i + 1);
+      var avg = slice.reduce(function (s, e) { return s + e.weight; }, 0) / slice.length;
+      trendPts.push({ x: xAt(parseDateKey(entries[i].date).getTime()), y: yAt(avg) });
+    }
+    var rawPts = entries.map(function (e) {
+      return { x: xAt(parseDateKey(e.date).getTime()), y: yAt(e.weight) };
+    });
+
+    function toPolyline(pts) {
+      var out = [];
+      for (var i = 0; i < pts.length; i++) out.push(pts[i].x.toFixed(1) + "," + pts[i].y.toFixed(1));
+      return out.join(" ");
+    }
+
+    var gridLines = "";
+    var steps = 3;
+    for (var g = 0; g <= steps; g++) {
+      var wVal = minW + (spanW * g / steps);
+      var y = yAt(wVal);
+      gridLines +=
+        '<line x1="' + padL + '" y1="' + y.toFixed(1) + '" x2="' + (W - padR) + '" y2="' + y.toFixed(1) + '" stroke="rgba(255,255,255,0.07)" stroke-width="1"/>' +
+        '<text x="2" y="' + (y + 3).toFixed(1) + '" font-size="8" fill="#8a93a3" font-family="ui-monospace,monospace">' + wVal.toFixed(1) + '</text>';
+    }
+
+    var dots = "";
+    for (var d = 0; d < rawPts.length; d++) {
+      dots += '<circle cx="' + rawPts[d].x.toFixed(1) + '" cy="' + rawPts[d].y.toFixed(1) + '" r="2.2" fill="#8a93a3" />';
+    }
+
+    return (
+      '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" role="img" aria-label="Courbe de poids">' +
+        gridLines +
+        '<polyline points="' + toPolyline(rawPts) + '" fill="none" stroke="#8a93a3" stroke-width="1" opacity="0.5" />' +
+        dots +
+        '<polyline points="' + toPolyline(trendPts) + '" fill="none" stroke="#c6ff3d" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />' +
+      '</svg>'
+    );
+  }
+
+  // Tendance lissée sur ~14 jours (moyenne des premières vs dernières
+  // pesées de la fenêtre) : moins bruitée qu'un simple point à point,
+  // qui peut être trompé par la rétention d'eau d'un seul jour.
+  function computeWeightTrendPerWeek(sorted) {
+    var today = new Date();
+    var cutoff = addDays(today, -14).getTime();
+    var recent = sorted.filter(function (e) { return parseDateKey(e.date).getTime() >= cutoff; });
+    if (recent.length < 4) return null;
+
+    var first = recent[0];
+    var last = recent[recent.length - 1];
+    var daysSpan = (parseDateKey(last.date).getTime() - parseDateKey(first.date).getTime()) / 86400000;
+    if (daysSpan < 6) return null;
+
+    var n = recent.length;
+    var headCount = Math.min(3, Math.ceil(n / 2));
+    var tailCount = Math.min(3, Math.floor(n / 2));
+    var head = recent.slice(0, headCount);
+    var tail = recent.slice(n - tailCount);
+    var avgHead = head.reduce(function (s, e) { return s + e.weight; }, 0) / head.length;
+    var avgTail = tail.reduce(function (s, e) { return s + e.weight; }, 0) / tail.length;
+
+    return { perWeek: (avgTail - avgHead) / (daysSpan / 7), currentWeight: avgTail };
+  }
+
+  function buildWeightSuggestion(trend, objective, currentWeight) {
+    if (!trend || !objective || !OBJECTIVE_WEEKLY_TARGET_PCT.hasOwnProperty(objective)) return null;
+
+    var targetPct = OBJECTIVE_WEEKLY_TARGET_PCT[objective];
+    var targetKgPerWeek = (targetPct / 100) * currentWeight;
+    var actual = trend.perWeek;
+
+    if (objective === "maintien" || objective === "recomp") {
+      var tolerance = 0.0015 * currentWeight;
+      if (Math.abs(actual) <= tolerance) return null;
+      var word = actual > 0 ? "pris" : "perdu";
+      var kcalDelta = round(Math.abs(actual) * KCAL_PER_KG / 7);
+      return "Ton poids a " + word + " en moyenne " + Math.abs(round1(actual)) + " kg/semaine ces 14 derniers jours, alors que l'objectif est le maintien. Essaie d'ajuster tes calories d'environ " + kcalDelta + " kcal/jour dans l'autre sens, puis recalcule tes cibles.";
+    }
+
+    var isRightDirection = (objective === "seche" && actual < 0) || (objective === "prise" && actual > 0);
+    var magnitudeRatio = targetKgPerWeek !== 0 ? actual / targetKgPerWeek : 0;
+
+    if (isRightDirection && magnitudeRatio >= 0.5 && magnitudeRatio <= 1.8) {
+      return null; // trajectoire cohérente avec l'objectif, rien à signaler
+    }
+
+    var kcalGap = round(Math.abs(targetKgPerWeek - actual) * KCAL_PER_KG / 7);
+    var trendLabel = (actual >= 0 ? "+" : "") + round1(actual) + " kg/semaine";
+
+    if (!isRightDirection || magnitudeRatio < 0.5) {
+      var action = objective === "seche" ? "réduire" : "augmenter";
+      return "Ta tendance de poids (" + trendLabel + ") n'avance pas assez vite vers ton objectif ces 14 derniers jours. Envisage de " + action + " tes calories d'environ " + kcalGap + " kcal/jour et recalcule tes cibles.";
+    }
+
+    var actionFast = objective === "seche" ? "remonter" : "réduire";
+    return "Ta tendance de poids (" + trendLabel + ") est plus rapide que ce qui est recommandé pour un naturel — risque de perte musculaire ou de prise de gras superflue. Envisage de " + actionFast + " tes calories d'environ " + kcalGap + " kcal/jour.";
+  }
+
+  function renderWeightList(weights) {
+    var sorted = weights.slice().sort(function (a, b) { return a.date < b.date ? 1 : -1; });
+    var recent = sorted.slice(0, 30);
+    var today = todayKey();
+
+    var html = "";
+    for (var i = 0; i < recent.length; i++) {
+      var w = recent[i];
+      var label = w.date === today ? "Aujourd'hui" : formatDateShort(w.date);
+      html +=
+        '<li class="weight-row">' +
+          '<span class="wr-date">' + label + '</span>' +
+          '<span class="wr-value">' + w.weight + ' kg</span>' +
+          '<button type="button" class="wr-del" data-date="' + w.date + '" aria-label="Supprimer">×</button>' +
+        '</li>';
+    }
+    $("weightList").innerHTML = html;
+
+    var delButtons = $("weightList").querySelectorAll(".wr-del");
+    for (var j = 0; j < delButtons.length; j++) {
+      delButtons[j].addEventListener("click", function (ev) {
+        deleteWeight(ev.currentTarget.getAttribute("data-date"));
+        refreshWeightPanel();
+      });
+    }
+  }
+
+  function refreshWeightPanel() {
+    var weights = loadWeights();
+    var today = todayKey();
+    var todayEntry = null;
+    for (var i = 0; i < weights.length; i++) {
+      if (weights[i].date === today) { todayEntry = weights[i]; break; }
+    }
+    $("weightInput").value = todayEntry ? todayEntry.weight : "";
+    $("weightSubmitBtn").textContent = todayEntry ? "Mettre à jour" : "Enregistrer";
+
+    refreshMeasurements();
+
+    if (weights.length === 0) {
+      $("weightEmpty").hidden = false;
+      $("weightContent").hidden = true;
+      return;
+    }
+    $("weightEmpty").hidden = true;
+    $("weightContent").hidden = false;
+
+    var stats = computeWeightStats(weights);
+    renderWeightStats(stats);
+
+    var cutoff = addDays(new Date(), -30).getTime();
+    var windowEntries = weights.filter(function (w) { return parseDateKey(w.date).getTime() >= cutoff; });
+    $("weightChart").innerHTML = buildWeightChartSvg(windowEntries);
+
+    var profile = readJSON(STORAGE_PROFILE);
+    var suggestionEl = $("weightSuggestion");
+    var msg = profile ? buildWeightSuggestion(computeWeightTrendPerWeek(weights), profile.objective, stats.current) : null;
+    if (msg) {
+      $("weightSuggestionText").textContent = msg;
+      suggestionEl.hidden = false;
+    } else {
+      suggestionEl.hidden = true;
+    }
+
+    renderWeightList(weights);
+  }
+
+  function handleWeightSubmit(e) {
+    e.preventDefault();
+    var val = parseFloat($("weightInput").value);
+    if (!val || val <= 0) return;
+    upsertWeight(todayKey(), round1(val));
+    refreshWeightPanel();
+  }
+
+  /* ---------------------------------------------------------
+     Mensurations — facultatives, complètent le poids pour
+     suivre une recomposition corporelle.
+     --------------------------------------------------------- */
+
+  var MEASUREMENT_META = {
+    waist: "Taille",
+    chest: "Poitrine",
+    hips: "Hanches",
+    arm: "Bras",
+    thigh: "Cuisse"
+  };
+  var MEASUREMENT_FIELDS = ["waist", "chest", "hips", "arm", "thigh"];
+
+  function loadMeasurements() {
+    var m = readJSON(STORAGE_MEASUREMENTS);
+    var arr = m || [];
+    arr.sort(function (a, b) { return a.date < b.date ? -1 : (a.date > b.date ? 1 : 0); });
+    return arr;
+  }
+
+  function saveMeasurements(arr) { writeJSON(STORAGE_MEASUREMENTS, arr); }
+
+  function upsertMeasurement(date, data) {
+    var arr = loadMeasurements();
+    var found = null;
+    for (var i = 0; i < arr.length; i++) {
+      if (arr[i].date === date) { found = arr[i]; break; }
+    }
+    if (!found) { found = { date: date }; arr.push(found); }
+    for (var j = 0; j < MEASUREMENT_FIELDS.length; j++) {
+      var key = MEASUREMENT_FIELDS[j];
+      var val = data[key];
+      if (val !== null && val !== undefined && !isNaN(val)) found[key] = val;
+    }
+    saveMeasurements(arr);
+  }
+
+  function refreshMeasurements() {
+    var arr = loadMeasurements();
+    $("measurementsEmpty").hidden = arr.length > 0;
+
+    // pré-remplit avec la dernière valeur connue de chaque champ (utile
+    // car on ne mesure pas forcément tout le monde à chaque fois).
+    var latestByField = {};
+    for (var i = 0; i < arr.length; i++) {
+      for (var f = 0; f < MEASUREMENT_FIELDS.length; f++) {
+        var key = MEASUREMENT_FIELDS[f];
+        if (arr[i][key] !== undefined) latestByField[key] = arr[i][key];
+      }
+    }
+    $("measWaist").value = latestByField.waist !== undefined ? latestByField.waist : "";
+    $("measChest").value = latestByField.chest !== undefined ? latestByField.chest : "";
+    $("measHips").value = latestByField.hips !== undefined ? latestByField.hips : "";
+    $("measArm").value = latestByField.arm !== undefined ? latestByField.arm : "";
+    $("measThigh").value = latestByField.thigh !== undefined ? latestByField.thigh : "";
+
+    var cutoff = addDays(new Date(), -30).getTime();
+    var trendHtml = "";
+    for (var t = 0; t < MEASUREMENT_FIELDS.length; t++) {
+      var mkey = MEASUREMENT_FIELDS[t];
+      var withField = arr.filter(function (e) { return e[mkey] !== undefined; });
+      if (withField.length < 2) continue;
+      var latest = withField[withField.length - 1];
+      var older = withField[0];
+      for (var k = 0; k < withField.length; k++) {
+        if (parseDateKey(withField[k].date).getTime() <= cutoff) older = withField[k];
+      }
+      if (older.date === latest.date) continue;
+      var delta = round1(latest[mkey] - older[mkey]);
+      trendHtml += '<span class="mt-chip">' + MEASUREMENT_META[mkey] + ' : ' + (delta > 0 ? "+" : "") + delta + ' cm /30j</span>';
+    }
+    $("measurementsTrends").innerHTML = trendHtml;
+
+    var sorted = arr.slice().sort(function (a, b) { return a.date < b.date ? 1 : -1; }).slice(0, 20);
+    var today = todayKey();
+    var html = "";
+    for (var s = 0; s < sorted.length; s++) {
+      var e = sorted[s];
+      var parts = [];
+      for (var p = 0; p < MEASUREMENT_FIELDS.length; p++) {
+        var pkey = MEASUREMENT_FIELDS[p];
+        if (e[pkey] !== undefined) parts.push(MEASUREMENT_META[pkey].charAt(0) + ":" + e[pkey]);
+      }
+      if (parts.length === 0) continue;
+      var label = e.date === today ? "Aujourd'hui" : formatDateShort(e.date);
+      html += '<li class="weight-row"><span class="wr-date">' + label + '</span><span class="wr-value">' + parts.join(" · ") + "</span></li>";
+    }
+    $("measurementsList").innerHTML = html;
+  }
+
+  function handleMeasurementsSubmit(e) {
+    e.preventDefault();
+    var data = {
+      waist: parseFloat($("measWaist").value),
+      chest: parseFloat($("measChest").value),
+      hips: parseFloat($("measHips").value),
+      arm: parseFloat($("measArm").value),
+      thigh: parseFloat($("measThigh").value)
+    };
+    var hasAny = false;
+    for (var k = 0; k < MEASUREMENT_FIELDS.length; k++) {
+      if (!isNaN(data[MEASUREMENT_FIELDS[k]])) hasAny = true;
+    }
+    if (!hasAny) return;
+    upsertMeasurement(todayKey(), data);
+    refreshMeasurements();
+  }
+
+  /* ---------------------------------------------------------
+     Hydratation — compteur quotidien simple, rattaché au
+     dayRecord du jour (repère : ~35 ml/kg de poids corporel).
+     --------------------------------------------------------- */
+
+  function addWater(dateKey, deltaMl) {
+    var history = loadHistory();
+    var record = history[dateKey];
+    if (!record) return null;
+    record.waterMl = Math.max(0, (record.waterMl || 0) + deltaMl);
+    saveHistory(history);
+    return record;
+  }
+
+  function refreshHydrationUI(record, profile) {
+    var target = (profile && profile.weight) ? Math.round(profile.weight * 35) : 2000;
+    var current = record.waterMl || 0;
+    var pct = Math.min(100, (current / target) * 100);
+    $("hydrationBarFill").style.width = pct + "%";
+    $("hydrationValue").textContent = current + " / " + target + " ml";
+  }
+
+  /* ---------------------------------------------------------
+     Repas favoris — regroupe plusieurs entrées du journal sous
+     un nom réutilisable en un tap (ex : "Petit-déj type").
+     --------------------------------------------------------- */
+
+  function loadFavorites() { return readJSON(STORAGE_FAVORITES) || []; }
+  function saveFavorites(arr) { writeJSON(STORAGE_FAVORITES, arr); }
+
+  function createFavoriteFromEntries(name, entries) {
+    var favs = loadFavorites();
+    var items = [];
+    for (var i = 0; i < entries.length; i++) {
+      var e = entries[i];
+      items.push({ name: e.name, kcal: e.kcal, protein: e.protein, fat: e.fat, carbs: e.carbs, grams: e.grams || null });
+    }
+    favs.push({ id: genId("fav"), name: name, items: items });
+    saveFavorites(favs);
+    return favs;
+  }
+
+  function deleteFavorite(id) {
+    var favs = loadFavorites().filter(function (f) { return f.id !== id; });
+    saveFavorites(favs);
+    return favs;
+  }
+
+  function favoriteTotalKcal(fav) {
+    var total = 0;
+    for (var i = 0; i < fav.items.length; i++) total += fav.items[i].kcal;
+    return total;
+  }
+
+  function renderFavoritesQuickAdd() {
+    var favs = loadFavorites();
+    var card = $("favoritesCard");
+    if (favs.length === 0) { card.hidden = true; return; }
+    card.hidden = false;
+
+    var html = "";
+    for (var i = 0; i < favs.length; i++) {
+      var f = favs[i];
+      html +=
+        '<li><button type="button" class="favorite-row" data-id="' + f.id + '">' +
+          '<span class="fav-icon">☆</span>' +
+          '<span class="fav-name">' + escapeHtml(f.name) +
+            '<span class="fav-sub">' + f.items.length + ' aliment' + (f.items.length > 1 ? "s" : "") + '</span>' +
+          '</span>' +
+          '<span class="fav-kcal">' + round(favoriteTotalKcal(f)) + ' kcal</span>' +
+        '</button></li>';
+    }
+    $("favoritesList").innerHTML = html;
+
+    var rows = $("favoritesList").querySelectorAll(".favorite-row");
+    for (var j = 0; j < rows.length; j++) {
+      rows[j].addEventListener("click", function (ev) {
+        var id = ev.currentTarget.getAttribute("data-id");
+        var fav = null;
+        var all = loadFavorites();
+        for (var k = 0; k < all.length; k++) { if (all[k].id === id) { fav = all[k]; break; } }
+        if (!fav) return;
+
+        var record = ensureTodayRecord();
+        if (!record) return;
+        for (var m = 0; m < fav.items.length; m++) {
+          var item = fav.items[m];
+          addFoodToDay(record.date, { name: item.name, kcal: item.kcal, protein: item.protein, fat: item.fat, carbs: item.carbs, grams: item.grams });
+        }
+        refreshTracker();
+      });
+    }
+  }
+
+  function refreshFavoritesManage() {
+    var favs = loadFavorites();
+    $("favoritesManageEmpty").hidden = favs.length > 0;
+
+    var html = "";
+    for (var i = 0; i < favs.length; i++) {
+      var f = favs[i];
+      html +=
+        '<li class="food-db-row">' +
+          '<div class="fdb-info">' +
+            '<span class="fdb-name">' + escapeHtml(f.name) + '</span>' +
+            '<span class="fdb-macros">' + f.items.length + ' aliment' + (f.items.length > 1 ? "s" : "") + ' · ' + round(favoriteTotalKcal(f)) + ' kcal</span>' +
+          '</div>' +
+          '<div class="fdb-actions">' +
+            '<button type="button" class="icon-btn icon-danger" data-fav-delete="' + f.id + '" aria-label="Supprimer">×</button>' +
+          '</div>' +
+        '</li>';
+    }
+    $("favoritesManageList").innerHTML = html;
+
+    var delBtns = $("favoritesManageList").querySelectorAll("[data-fav-delete]");
+    for (var j = 0; j < delBtns.length; j++) {
+      delBtns[j].addEventListener("click", function (ev) {
+        var confirmed = window.confirm("Supprimer ce repas favori ?");
+        if (!confirmed) return;
+        deleteFavorite(ev.currentTarget.getAttribute("data-fav-delete"));
+        refreshFavoritesManage();
+        renderFavoritesQuickAdd();
+      });
+    }
+  }
+
+  function handleSaveAsFavorite() {
+    var record = ensureTodayRecord();
+    if (!record || record.entries.length === 0) return;
+    var name = window.prompt("Nom de ce repas favori (ex : Petit-déj type) :");
+    if (!name || !name.trim()) return;
+    createFavoriteFromEntries(name.trim(), record.entries);
+    renderFavoritesQuickAdd();
+    window.alert('Repas favori "' + name.trim() + '" enregistré — retrouve-le en haut de l\'onglet Suivi ou dans Aliments > Repas favoris.');
+  }
+
+  /* ---------------------------------------------------------
+     Aliments fréquents — comptage d'usage pour faire remonter
+     ce que tu manges souvent, dans la recherche et une rangée
+     de raccourcis rapides.
+     --------------------------------------------------------- */
+
+  function loadUsage() { return readJSON(STORAGE_USAGE) || {}; }
+  function saveUsage(u) { writeJSON(STORAGE_USAGE, u); }
+
+  function bumpUsage(foodId) {
+    if (!foodId) return;
+    var u = loadUsage();
+    u[foodId] = (u[foodId] || 0) + 1;
+    saveUsage(u);
+  }
+
+  function topFrequentFoods(limit) {
+    var usage = loadUsage();
+    var foods = loadFoods();
+    var scored = [];
+    for (var i = 0; i < foods.length; i++) {
+      var count = usage[foods[i].id] || 0;
+      if (count > 0) scored.push({ food: foods[i], count: count });
+    }
+    scored.sort(function (a, b) { return b.count - a.count; });
+    var out = [];
+    for (var j = 0; j < scored.length && j < limit; j++) out.push(scored[j].food);
+    return out;
+  }
+
+  function renderFrequentChips(cfg) {
+    if (!cfg.frequentListEl) return;
+    var top = topFrequentFoods(6);
+    if (top.length === 0) { cfg.frequentContainer.hidden = true; return; }
+    cfg.frequentContainer.hidden = false;
+
+    var html = "";
+    for (var i = 0; i < top.length; i++) {
+      html += '<button type="button" class="frequent-chip" data-id="' + top[i].id + '">' + escapeHtml(top[i].name) + '</button>';
+    }
+    cfg.frequentListEl.innerHTML = html;
+
+    var chips = cfg.frequentListEl.querySelectorAll(".frequent-chip");
+    for (var j = 0; j < chips.length; j++) {
+      chips[j].addEventListener("click", function (ev) {
+        var food = findFoodById(loadFoods(), ev.currentTarget.getAttribute("data-id"));
+        if (!food) return;
+        cfg.searchInput.value = food.name;
+        cfg.searchInput.dispatchEvent(new Event("input"));
+        cfg.gramsInput.focus();
+        cfg.gramsInput.select();
+      });
+    }
+  }
+
+  /* ---------------------------------------------------------
+     Photo de repas — redimensionnée et compressée côté client
+     avant stockage (le localStorage a une capacité limitée).
+     --------------------------------------------------------- */
+
+  function readAndCompressImage(file, maxDim, quality, callback) {
+    var reader = new FileReader();
+    reader.onload = function () {
+      var img = new Image();
+      img.onload = function () {
+        var scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+        var cw = Math.max(1, Math.round(img.width * scale));
+        var ch = Math.max(1, Math.round(img.height * scale));
+        var canvas = document.createElement("canvas");
+        canvas.width = cw; canvas.height = ch;
+        var ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, cw, ch);
+        var dataUrl = null;
+        try { dataUrl = canvas.toDataURL("image/jpeg", quality); } catch (e) { dataUrl = null; }
+        callback(dataUrl);
+      };
+      img.onerror = function () { callback(null); };
+      img.src = reader.result;
+    };
+    reader.onerror = function () { callback(null); };
+    reader.readAsDataURL(file);
+  }
+
+  function setupPhotoCapture(cfg) {
+    // cfg = { btn, input, previewEl, imgEl, removeBtn }
+    var pendingDataUrl = null;
+
+    cfg.btn.addEventListener("click", function () { cfg.input.click(); });
+
+    cfg.input.addEventListener("change", function (e) {
+      var file = e.target.files && e.target.files[0];
+      e.target.value = "";
+      if (!file) return;
+      readAndCompressImage(file, 200, 0.55, function (dataUrl) {
+        if (!dataUrl) return;
+        pendingDataUrl = dataUrl;
+        cfg.imgEl.src = dataUrl;
+        cfg.previewEl.hidden = false;
+      });
+    });
+
+    cfg.removeBtn.addEventListener("click", function () {
+      pendingDataUrl = null;
+      cfg.previewEl.hidden = true;
+      cfg.imgEl.src = "";
+    });
+
+    return {
+      getPhoto: function () { return pendingDataUrl; },
+      clear: function () { pendingDataUrl = null; cfg.previewEl.hidden = true; cfg.imgEl.src = ""; }
+    };
+  }
+
+  /* ---------------------------------------------------------
+     Sauvegarde — export / import de toutes les données locales
+     --------------------------------------------------------- */
+
+  function exportAllData() {
+    var payload = {
+      app: "NaturaLift",
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      profile: readJSON(STORAGE_PROFILE),
+      history: readJSON(STORAGE_HISTORY),
+      foods: readJSON(STORAGE_FOODS),
+      weights: readJSON(STORAGE_WEIGHTS),
+      measurements: readJSON(STORAGE_MEASUREMENTS),
+      favorites: readJSON(STORAGE_FAVORITES),
+      usage: readJSON(STORAGE_USAGE)
+    };
+    var blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = url;
+    a.download = "naturalift-sauvegarde-" + todayKey() + ".json";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+  }
+
+  function showBackupStatus(msg, isError) {
+    var el = $("backupStatus");
+    el.hidden = false;
+    el.textContent = msg;
+    el.style.borderLeftColor = isError ? "var(--red)" : "var(--lime)";
+  }
+
+  function importAllData(file) {
+    var reader = new FileReader();
+    reader.onload = function () {
+      var data;
+      try {
+        data = JSON.parse(reader.result);
+      } catch (e) {
+        showBackupStatus("Fichier invalide : ce n'est pas une sauvegarde NaturaLift lisible.", true);
+        return;
+      }
+      if (!data || data.app !== "NaturaLift") {
+        showBackupStatus("Fichier invalide : ce n'est pas une sauvegarde NaturaLift.", true);
+        return;
+      }
+      var confirmed = window.confirm("Importer cette sauvegarde va remplacer toutes tes données actuelles sur cet appareil (profil, historique, aliments, poids). Continuer ?");
+      if (!confirmed) return;
+
+      if (data.profile) writeJSON(STORAGE_PROFILE, data.profile);
+      if (data.history) writeJSON(STORAGE_HISTORY, data.history);
+      if (data.foods) writeJSON(STORAGE_FOODS, data.foods);
+      if (data.weights) writeJSON(STORAGE_WEIGHTS, data.weights);
+      if (data.measurements) writeJSON(STORAGE_MEASUREMENTS, data.measurements);
+      if (data.favorites) writeJSON(STORAGE_FAVORITES, data.favorites);
+      if (data.usage) writeJSON(STORAGE_USAGE, data.usage);
+
+      showBackupStatus("Import réussi. Rechargement de l'application…", false);
+      window.setTimeout(function () { window.location.reload(); }, 800);
+    };
+    reader.onerror = function () {
+      showBackupStatus("Impossible de lire ce fichier.", true);
+    };
+    reader.readAsText(file);
   }
 
   /* ---------------------------------------------------------
@@ -526,13 +1241,47 @@
   }
 
   /* ---------------------------------------------------------
+     Type de journée (repos / entraînement) — ajuste légèrement
+     les glucides (et donc les calories) sans toucher protéines
+     ni lipides. record.targets reste toujours la photo brute du
+     profil ; l'ajustement est calculé à la volée à l'affichage.
+     --------------------------------------------------------- */
+
+  function setDayType(dateKey, type) {
+    var history = loadHistory();
+    var record = history[dateKey];
+    if (!record) return null;
+    record.dayType = (type === "neutral") ? null : type;
+    saveHistory(history);
+    return record;
+  }
+
+  function effectiveTargetsFor(record) {
+    var base = record && record.targets;
+    if (!base) return base;
+    var type = record.dayType;
+    if (type !== "training" && type !== "rest") return base;
+
+    var carbFactor = type === "training" ? 1.15 : 0.85;
+    var carbsAdjusted = Math.max(0, base.carbs * carbFactor);
+    var kcalDelta = (carbsAdjusted - base.carbs) * KCAL_PER_G.carbs;
+
+    return {
+      kcal: round(base.kcal + kcalDelta),
+      protein: base.protein,
+      fat: base.fat,
+      carbs: round(carbsAdjusted)
+    };
+  }
+
+  /* ---------------------------------------------------------
      Statut d'une journée (couleur)
      --------------------------------------------------------- */
 
   function dayStatus(record) {
     if (!record || record.entries.length === 0) return "none";
     var totals = sumEntries(record.entries);
-    var t = record.targets;
+    var t = effectiveTargetsFor(record);
     if (!t || t.kcal <= 0) return "none";
 
     var kcalPct = (totals.kcal / t.kcal) * 100;
@@ -836,6 +1585,8 @@
       var dateKey = cfg.getDateKey();
       if (!dateKey) return;
       addFoodToDay(dateKey, entry);
+      bumpUsage(match.id);
+      renderFrequentChips(cfg);
 
       cfg.dbForm.reset();
       cfg.gramsInput.value = "100";
@@ -861,9 +1612,23 @@
 
       var dateKey = cfg.getDateKey();
       if (!dateKey) return;
-      addFoodToDay(dateKey, entry);
+
+      if (cfg.photoCtrl) {
+        var photo = cfg.photoCtrl.getPhoto();
+        if (photo) entry.photo = photo;
+      }
+
+      try {
+        addFoodToDay(dateKey, entry);
+      } catch (err) {
+        // Le plus souvent une photo trop lourde qui dépasse le quota du
+        // localStorage : on prévient plutôt que de perdre l'entrée en silence.
+        window.alert("Impossible d'enregistrer (stockage local plein). Réessaie sans photo, ou libère de la place dans Aliments > Sauvegarde.");
+        return;
+      }
 
       cfg.manualForm.reset();
+      if (cfg.photoCtrl) cfg.photoCtrl.clear();
       cfg.onAdded();
     });
 
@@ -980,6 +1745,8 @@
     cfg.modeDb.addEventListener("change", function () { showMode("db"); });
     cfg.modeScan.addEventListener("change", function () { showMode("scan"); });
     cfg.modeManual.addEventListener("change", function () { showMode("manual"); });
+
+    renderFrequentChips(cfg);
   }
 
   /* ---------------------------------------------------------
@@ -998,8 +1765,9 @@
     for (var i = entries.length - 1; i >= 0; i--) {
       var e = entries[i];
       var qtyLabel = e.grams ? (e.grams + ' g · ') : '';
+      var thumb = e.photo ? '<img class="food-thumb" src="' + e.photo + '" alt="">' : '';
       html +=
-        '<li class="food-item">' +
+        '<li class="food-item">' + thumb +
           '<span class="food-name">' + escapeHtml(e.name) +
             '<span class="food-macros">' + qtyLabel + 'P ' + e.protein + 'g · L ' + e.fat + 'g · G ' + e.carbs + 'g</span>' +
           '</span>' +
@@ -1030,7 +1798,7 @@
     var record = ensureTodayRecord();
     var totals = sumEntries(record.entries);
 
-    $("gaugesGrid").innerHTML = gaugesHtml(totals, record.targets, false);
+    $("gaugesGrid").innerHTML = gaugesHtml(totals, effectiveTargetsFor(record), false);
     renderFoodListInto($("foodLog"), $("logEmpty"), record.entries, function (id) {
       removeFoodFromDay(record.date, id);
       refreshTracker();
@@ -1039,6 +1807,15 @@
     $("trackDate").textContent = formatDateLong(record.date);
     $("validatedChip").hidden = !record.validated;
     $("validateDay").hidden = record.validated;
+    $("saveAsFavorite").hidden = record.entries.length === 0;
+
+    var dtVal = record.dayType || "neutral";
+    var dtId = dtVal === "rest" ? "dayTypeRest" : (dtVal === "training" ? "dayTypeTraining" : "dayTypeNeutral");
+    var dtInput = document.getElementById(dtId);
+    if (dtInput) dtInput.checked = true;
+
+    refreshHydrationUI(record, profile);
+    renderFavoritesQuickAdd();
   }
 
   function handleResetDay() {
@@ -1188,7 +1965,12 @@
 
     $("detailDate").textContent = formatDateLong(record.date);
     $("detailValidatedChip").hidden = !record.validated;
-    $("detailGauges").innerHTML = gaugesHtml(totals, record.targets, false);
+    $("detailGauges").innerHTML = gaugesHtml(totals, effectiveTargetsFor(record), false);
+
+    var dtVal = record.dayType || "neutral";
+    var dtId = dtVal === "rest" ? "detailDayTypeRest" : (dtVal === "training" ? "detailDayTypeTraining" : "detailDayTypeNeutral");
+    var dtInput = document.getElementById(dtId);
+    if (dtInput) dtInput.checked = true;
 
     renderFoodListInto($("detailFoodLog"), $("detailLogEmpty"), record.entries, function (id) {
       removeFoodFromDay(record.date, id);
@@ -1260,7 +2042,7 @@
       sumConsumed.fat += t.fat;
       sumConsumed.carbs += t.carbs;
 
-      var tg = recordsWithData[j].targets;
+      var tg = effectiveTargetsFor(recordsWithData[j]);
       sumTarget.kcal += tg.kcal;
       sumTarget.protein += tg.protein;
       sumTarget.fat += tg.fat;
@@ -1349,8 +2131,13 @@
 
   function refreshFoodsPanel() {
     var filterText = $("foodsFilter").value.trim().toLowerCase();
+    var usage = loadUsage();
     var foods = loadFoods().slice();
-    foods.sort(function (a, b) { return a.name.localeCompare(b.name, "fr"); });
+    foods.sort(function (a, b) {
+      var ua = usage[a.id] || 0, ub = usage[b.id] || 0;
+      if (ub !== ua) return ub - ua;
+      return a.name.localeCompare(b.name, "fr");
+    });
 
     if (filterText) {
       foods = foods.filter(function (f) { return f.name.toLowerCase().indexOf(filterText) !== -1; });
@@ -1456,7 +2243,7 @@
       tabs[i].setAttribute("aria-selected", isActive ? "true" : "false");
     }
 
-    var panels = { calc: "panel-calc", track: "panel-track", history: "panel-history", stats: "panel-stats", foods: "panel-foods" };
+    var panels = { calc: "panel-calc", track: "panel-track", history: "panel-history", stats: "panel-stats", weight: "panel-weight", foods: "panel-foods" };
     for (var key in panels) {
       if (!panels.hasOwnProperty(key)) continue;
       var panelEl = $(panels[key]);
@@ -1472,9 +2259,11 @@
       refreshHistory();
     }
     if (tabName === "stats") refreshStats();
+    if (tabName === "weight") refreshWeightPanel();
     if (tabName === "foods") {
       closeFoodEditForm();
       refreshFoodsPanel();
+      refreshFavoritesManage();
     }
   }
 
@@ -1491,6 +2280,14 @@
     $("validateDay").addEventListener("click", handleValidateDay);
     $("scannerClose").addEventListener("click", closeScanner);
 
+    var trackPhotoCtrl = setupPhotoCapture({
+      btn: $("foodPhotoBtn"),
+      input: $("foodPhotoInput"),
+      previewEl: $("foodPhotoPreview"),
+      imgEl: $("foodPhotoImg"),
+      removeBtn: $("foodPhotoRemove")
+    });
+
     setupFoodEntryUI({
       modeDb: $("addModeDb"),
       modeScan: $("addModeScan"),
@@ -1505,6 +2302,9 @@
       gramsInput: $("foodGrams"),
       dbSubmitBtn: $("dbAddSubmit"),
       manualFields: { name: $("foodName"), kcal: $("foodKcal"), protein: $("foodProtein"), fat: $("foodFat"), carbs: $("foodCarbs") },
+      photoCtrl: trackPhotoCtrl,
+      frequentContainer: $("frequentFoods"),
+      frequentListEl: $("frequentFoodsList"),
       scan: {
         openBtn: $("openScannerBtn"),
         statusEl: $("scanStatus"),
@@ -1526,6 +2326,14 @@
       onAdded: refreshTracker
     });
 
+    var detailPhotoCtrl = setupPhotoCapture({
+      btn: $("detailFoodPhotoBtn"),
+      input: $("detailFoodPhotoInput"),
+      previewEl: $("detailFoodPhotoPreview"),
+      imgEl: $("detailFoodPhotoImg"),
+      removeBtn: $("detailFoodPhotoRemove")
+    });
+
     setupFoodEntryUI({
       modeDb: $("detailAddModeDb"),
       modeScan: $("detailAddModeScan"),
@@ -1540,6 +2348,7 @@
       gramsInput: $("detailFoodGrams"),
       dbSubmitBtn: $("detailDbAddSubmit"),
       manualFields: { name: $("detailFoodName"), kcal: $("detailFoodKcal"), protein: $("detailFoodProtein"), fat: $("detailFoodFat"), carbs: $("detailFoodCarbs") },
+      photoCtrl: detailPhotoCtrl,
       scan: {
         openBtn: $("detailOpenScannerBtn"),
         statusEl: $("detailScanStatus"),
@@ -1565,6 +2374,35 @@
     $("detailDelete").addEventListener("click", handleDetailDelete);
     $("detailBack").addEventListener("click", closeHistoryDetail);
 
+    $("dayTypeRest").addEventListener("change", function () {
+      var r = ensureTodayRecord(); if (r) { setDayType(r.date, "rest"); refreshTracker(); }
+    });
+    $("dayTypeNeutral").addEventListener("change", function () {
+      var r = ensureTodayRecord(); if (r) { setDayType(r.date, "neutral"); refreshTracker(); }
+    });
+    $("dayTypeTraining").addEventListener("change", function () {
+      var r = ensureTodayRecord(); if (r) { setDayType(r.date, "training"); refreshTracker(); }
+    });
+    $("detailDayTypeRest").addEventListener("change", function () {
+      if (historyState.currentDetailKey) { setDayType(historyState.currentDetailKey, "rest"); renderHistoryDetail(historyState.currentDetailKey); }
+    });
+    $("detailDayTypeNeutral").addEventListener("change", function () {
+      if (historyState.currentDetailKey) { setDayType(historyState.currentDetailKey, "neutral"); renderHistoryDetail(historyState.currentDetailKey); }
+    });
+    $("detailDayTypeTraining").addEventListener("change", function () {
+      if (historyState.currentDetailKey) { setDayType(historyState.currentDetailKey, "training"); renderHistoryDetail(historyState.currentDetailKey); }
+    });
+
+    $("hydrationPlus").addEventListener("click", function () {
+      var r = ensureTodayRecord(); if (r) { addWater(r.date, 250); refreshTracker(); }
+    });
+    $("hydrationMinus").addEventListener("click", function () {
+      var r = ensureTodayRecord(); if (r) { addWater(r.date, -250); refreshTracker(); }
+    });
+
+    $("saveAsFavorite").addEventListener("click", handleSaveAsFavorite);
+    $("measurementsForm").addEventListener("submit", handleMeasurementsSubmit);
+
     $("viewList").addEventListener("change", function () { switchHistoryView("list"); });
     $("viewCalendar").addEventListener("change", function () { switchHistoryView("calendar"); });
 
@@ -1581,6 +2419,17 @@
     $("cancelFoodEdit").addEventListener("click", closeFoodEditForm);
     $("foodEditForm").addEventListener("submit", handleFoodEditSubmit);
     $("foodsFilter").addEventListener("input", refreshFoodsPanel);
+
+    $("weightForm").addEventListener("submit", handleWeightSubmit);
+    $("weightGoToCalc").addEventListener("click", function () { switchTab("calc"); });
+
+    $("exportDataBtn").addEventListener("click", exportAllData);
+    $("importDataBtn").addEventListener("click", function () { $("importDataFile").click(); });
+    $("importDataFile").addEventListener("change", function (e) {
+      var file = e.target.files && e.target.files[0];
+      if (file) importAllData(file);
+      e.target.value = "";
+    });
 
     var tabs = document.querySelectorAll(".tab");
     for (var i = 0; i < tabs.length; i++) {
@@ -1610,6 +2459,7 @@
       var name = activeTab.getAttribute("data-tab");
       if (name === "track") refreshTracker();
       if (name === "stats") refreshStats();
+      if (name === "weight") refreshWeightPanel();
     });
   }
 
