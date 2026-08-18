@@ -10,7 +10,7 @@
 <link rel="manifest" href="./manifest.json">
 <link rel="icon" href="./icon-192.png">
 <link rel="apple-touch-icon" href="./icon-192.png">
-<link rel="stylesheet" href="./style.css?v=9">
+<link rel="stylesheet" href="./style.css?v=10">
 </head>
 <body>
 
@@ -18,12 +18,12 @@
 
   <header class="topbar">
     <div class="brand">
-      <span class="brand-dot" aria-hidden="true"></span>
-      NATURA<span class="accent">LIFT</span>
+      <span class="brand-name"><span class="brand-dot" aria-hidden="true"></span>NATURA<span class="accent">LIFT</span></span>
+      <button type="button" id="openSettingsBtn" class="settings-trigger" aria-label="Paramètres">⚙</button>
     </div>
     <div class="tabs-scroll">
       <nav class="tabs" role="tablist" aria-label="Navigation principale">
-        <button class="tab active" data-tab="calc" role="tab" aria-selected="true">Calcul</button>
+        <button class="tab active" data-tab="calc" role="tab" aria-selected="true">Objectif</button>
         <button class="tab" data-tab="track" role="tab" aria-selected="false">Suivi</button>
         <button class="tab" data-tab="history" role="tab" aria-selected="false">Historique</button>
         <button class="tab" data-tab="stats" role="tab" aria-selected="false">Bilans</button>
@@ -35,65 +35,13 @@
 
   <main>
 
-    <!-- ===================== ONGLET CALCULATEUR ===================== -->
+    <!-- ===================== ONGLET OBJECTIF ===================== -->
     <section id="panel-calc" class="panel active">
 
-      <form id="calcForm" class="card form-card">
-        <h1 class="card-title">Tes objectifs, calculés pour un naturel</h1>
-        <p class="card-sub">Renseigne ton profil pour obtenir des cibles caloriques et de macros adaptées à ta physiologie, sans les excès des protocoles "assistés".</p>
-
-        <div class="field-grid">
-
-          <div class="field">
-            <label for="sex">Sexe</label>
-            <div class="segmented" role="radiogroup" aria-label="Sexe">
-              <input type="radio" id="sexH" name="sex" value="H" checked>
-              <label for="sexH" class="seg-btn">Homme</label>
-              <input type="radio" id="sexF" name="sex" value="F">
-              <label for="sexF" class="seg-btn">Femme</label>
-            </div>
-          </div>
-
-          <div class="field">
-            <label for="age">Âge</label>
-            <input type="number" id="age" name="age" min="14" max="90" value="30" required inputmode="numeric">
-          </div>
-
-          <div class="field">
-            <label for="weight">Poids (kg)</label>
-            <input type="number" id="weight" name="weight" min="30" max="250" step="0.1" value="75" required inputmode="decimal">
-          </div>
-
-          <div class="field">
-            <label for="height">Taille (cm)</label>
-            <input type="number" id="height" name="height" min="120" max="230" value="178" required inputmode="numeric">
-          </div>
-
-          <div class="field field-wide">
-            <label for="activity">Niveau d'activité</label>
-            <select id="activity" name="activity">
-              <option value="1.2">Sédentaire — peu ou pas de sport</option>
-              <option value="1.375">Léger — 1 à 3 séances / semaine</option>
-              <option value="1.55" selected>Modéré — 3 à 5 séances / semaine</option>
-              <option value="1.725">Élevé — 6 à 7 séances / semaine</option>
-              <option value="1.9">Très élevé — sport intense quotidien / travail physique</option>
-            </select>
-          </div>
-
-          <div class="field field-wide">
-            <label for="objective">Objectif</label>
-            <select id="objective" name="objective">
-              <option value="seche">Sèche — perte de graisse</option>
-              <option value="prise">Prise de masse — gain musculaire</option>
-              <option value="maintien" selected>Maintien</option>
-              <option value="recomp">Recomposition corporelle</option>
-            </select>
-          </div>
-
-        </div>
-
-        <button type="submit" class="btn-primary">Calculer mes objectifs</button>
-      </form>
+      <div id="noProfileGoal" class="card empty-card">
+        <p>Aucun objectif défini pour le moment. Configure ton profil pour obtenir tes cibles caloriques et de macros.</p>
+        <button type="button" id="openSettingsFromGoal" class="btn-secondary">⚙ Configurer mon profil</button>
+      </div>
 
       <section id="results" class="results" hidden>
 
@@ -133,7 +81,7 @@
 
       <div id="noProfile" class="card empty-card">
         <p>Aucun objectif défini pour le moment.</p>
-        <button type="button" id="goToCalcFromTrack" class="btn-secondary">Aller au calculateur</button>
+        <button type="button" id="goToCalcFromTrack" class="btn-secondary">⚙ Configurer mon profil</button>
       </div>
 
       <div id="trackerContent" hidden>
@@ -702,6 +650,72 @@
 
 </div>
 
+<!-- ===================== PARAMÈTRES (overlay profil) ===================== -->
+<div id="settingsOverlay" class="settings-overlay" hidden>
+  <div class="settings-box">
+    <div class="settings-header">
+      <span>Paramètres</span>
+      <button type="button" id="settingsClose" class="scanner-close" aria-label="Fermer les paramètres">×</button>
+    </div>
+
+    <form id="calcForm" class="settings-form">
+      <p class="card-sub">Renseigne ton profil pour obtenir des cibles caloriques et de macros adaptées à ta physiologie, sans les excès des protocoles "assistés".</p>
+
+      <div class="field-grid">
+
+        <div class="field">
+          <label for="sex">Sexe</label>
+          <div class="segmented" role="radiogroup" aria-label="Sexe">
+            <input type="radio" id="sexH" name="sex" value="H" checked>
+            <label for="sexH" class="seg-btn">Homme</label>
+            <input type="radio" id="sexF" name="sex" value="F">
+            <label for="sexF" class="seg-btn">Femme</label>
+          </div>
+        </div>
+
+        <div class="field">
+          <label for="age">Âge</label>
+          <input type="number" id="age" name="age" min="14" max="90" value="30" required inputmode="numeric">
+        </div>
+
+        <div class="field">
+          <label for="weight">Poids (kg)</label>
+          <input type="number" id="weight" name="weight" min="30" max="250" step="0.1" value="75" required inputmode="decimal">
+        </div>
+
+        <div class="field">
+          <label for="height">Taille (cm)</label>
+          <input type="number" id="height" name="height" min="120" max="230" value="178" required inputmode="numeric">
+        </div>
+
+        <div class="field field-wide">
+          <label for="activity">Niveau d'activité</label>
+          <select id="activity" name="activity">
+            <option value="1.2">Sédentaire — peu ou pas de sport</option>
+            <option value="1.375">Léger — 1 à 3 séances / semaine</option>
+            <option value="1.55" selected>Modéré — 3 à 5 séances / semaine</option>
+            <option value="1.725">Élevé — 6 à 7 séances / semaine</option>
+            <option value="1.9">Très élevé — sport intense quotidien / travail physique</option>
+          </select>
+        </div>
+
+        <div class="field field-wide">
+          <label for="objective">Objectif</label>
+          <select id="objective" name="objective">
+            <option value="seche">Sèche — perte de graisse</option>
+            <option value="prise">Prise de masse — gain musculaire</option>
+            <option value="maintien" selected>Maintien</option>
+            <option value="recomp">Recomposition corporelle</option>
+          </select>
+        </div>
+
+      </div>
+
+      <button type="submit" class="btn-primary">Calculer mes objectifs</button>
+    </form>
+  </div>
+</div>
+
 <!-- ===================== SCANNER (overlay caméra partagé) ===================== -->
 <div id="scannerOverlay" class="scanner-overlay" hidden>
   <div class="scanner-box">
@@ -719,6 +733,6 @@
      si une connexion internet est disponible ; l'app détecte son absence et
      bascule proprement sur un message d'indisponibilité sinon). -->
 <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js" defer></script>
-<script src="./app.js?v=9" defer></script>
+<script src="./app.js?v=10" defer></script>
 </body>
 </html>

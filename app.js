@@ -1399,6 +1399,9 @@
     $("results").hidden = false;
   }
 
+  function openSettings() { $("settingsOverlay").hidden = false; }
+  function closeSettings() { $("settingsOverlay").hidden = true; }
+
   function handleCalcSubmit(e) {
     e.preventDefault();
 
@@ -1422,13 +1425,21 @@
       upsertDayRecord(todayRecord);
     }
 
+    $("noProfileGoal").hidden = true;
     renderResults(targets, sex);
+    closeSettings();
+    switchTab("calc");
     $("results").scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
   function loadExistingProfile() {
     var profile = readJSON(STORAGE_PROFILE);
-    if (!profile) return;
+    if (!profile) {
+      $("noProfileGoal").hidden = false;
+      $("results").hidden = true;
+      return;
+    }
+    $("noProfileGoal").hidden = true;
 
     var sexInput = document.getElementById(profile.sex === "F" ? "sexF" : "sexH");
     if (sexInput) sexInput.checked = true;
@@ -2473,7 +2484,7 @@
     $("foodsFilter").addEventListener("input", refreshFoodsPanel);
 
     $("weightForm").addEventListener("submit", handleWeightSubmit);
-    $("weightGoToCalc").addEventListener("click", function () { switchTab("calc"); });
+    $("weightGoToCalc").addEventListener("click", function () { openSettings(); });
 
     $("exportDataBtn").addEventListener("click", exportAllData);
     $("importDataBtn").addEventListener("click", function () { $("importDataFile").click(); });
@@ -2491,7 +2502,11 @@
     }
 
     $("goToTracker").addEventListener("click", function () { switchTab("track"); });
-    $("goToCalcFromTrack").addEventListener("click", function () { switchTab("calc"); });
+    $("goToCalcFromTrack").addEventListener("click", function () { openSettings(); });
+
+    $("openSettingsBtn").addEventListener("click", openSettings);
+    $("openSettingsFromGoal").addEventListener("click", openSettings);
+    $("settingsClose").addEventListener("click", closeSettings);
 
     loadExistingProfile();
 
