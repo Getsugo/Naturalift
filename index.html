@@ -10,7 +10,7 @@
 <link rel="manifest" href="./manifest.json">
 <link rel="icon" href="./icon-192.png">
 <link rel="apple-touch-icon" href="./icon-192.png">
-<link rel="stylesheet" href="./style.css?v=8">
+<link rel="stylesheet" href="./style.css?v=9">
 </head>
 <body>
 
@@ -225,13 +225,14 @@
 
             <div id="scanNotFound" class="note scan-not-found" hidden>
               <span id="scanNotFoundMsg"></span>
-              <button type="button" id="scanUseManual" class="btn-secondary">Basculer en saisie manuelle</button>
+              <button type="button" id="scanCreateFromScan" class="btn-primary">+ Ajouter ce produit à ma base</button>
+              <button type="button" id="scanUseManual" class="btn-secondary">Saisie manuelle simple (non sauvegardée)</button>
             </div>
 
             <form id="scanAddForm" class="scan-result food-preview" hidden>
               <div class="scan-result-header">
                 <input type="text" id="scanProductName" class="scan-name-input" placeholder="Nom du produit">
-                <span class="chip chip-muted">Open Food Facts</span>
+                <span id="scanSourceChip" class="chip chip-muted">Open Food Facts</span>
               </div>
               <p class="scan-name-hint">Nom fourni par la base communautaire Open Food Facts (code <span id="scanBarcodeLabel"></span>) — corrige-le si besoin, il peut être erroné pour certains produits.</p>
               <p id="scanIncomplete" class="note" hidden>Valeurs nutritionnelles incomplètes sur Open Food Facts — vérifie/corrige avant d'ajouter.</p>
@@ -247,7 +248,7 @@
               </div>
               <label class="checkbox-row">
                 <input type="checkbox" id="scanSaveToDb" checked>
-                Enregistrer ce produit dans ma base d'aliments
+                Enregistrer ce produit dans ma base (reconnu instantanément au prochain scan)
               </label>
               <button type="submit" class="btn-primary" id="scanAddSubmit">Ajouter au journal</button>
             </form>
@@ -404,13 +405,14 @@
 
             <div id="detailScanNotFound" class="note scan-not-found" hidden>
               <span id="detailScanNotFoundMsg"></span>
-              <button type="button" id="detailScanUseManual" class="btn-secondary">Basculer en saisie manuelle</button>
+              <button type="button" id="detailScanCreateFromScan" class="btn-primary">+ Ajouter ce produit à ma base</button>
+              <button type="button" id="detailScanUseManual" class="btn-secondary">Saisie manuelle simple (non sauvegardée)</button>
             </div>
 
             <form id="detailScanAddForm" class="scan-result food-preview" hidden>
               <div class="scan-result-header">
                 <input type="text" id="detailScanProductName" class="scan-name-input" placeholder="Nom du produit">
-                <span class="chip chip-muted">Open Food Facts</span>
+                <span id="detailScanSourceChip" class="chip chip-muted">Open Food Facts</span>
               </div>
               <p class="scan-name-hint">Nom fourni par la base communautaire Open Food Facts (code <span id="detailScanBarcodeLabel"></span>) — corrige-le si besoin, il peut être erroné pour certains produits.</p>
               <p id="detailScanIncomplete" class="note" hidden>Valeurs nutritionnelles incomplètes sur Open Food Facts — vérifie/corrige avant d'ajouter.</p>
@@ -426,7 +428,7 @@
               </div>
               <label class="checkbox-row">
                 <input type="checkbox" id="detailScanSaveToDb" checked>
-                Enregistrer ce produit dans ma base d'aliments
+                Enregistrer ce produit dans ma base (reconnu instantanément au prochain scan)
               </label>
               <button type="submit" class="btn-primary" id="detailScanAddSubmit">Ajouter à cette journée</button>
             </form>
@@ -717,6 +719,6 @@
      si une connexion internet est disponible ; l'app détecte son absence et
      bascule proprement sur un message d'indisponibilité sinon). -->
 <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js" defer></script>
-<script src="./app.js?v=8" defer></script>
+<script src="./app.js?v=9" defer></script>
 </body>
 </html>

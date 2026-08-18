@@ -222,6 +222,14 @@
     return null;
   }
 
+  function findFoodByBarcode(foods, barcode) {
+    if (!barcode) return null;
+    for (var i = 0; i < foods.length; i++) {
+      if (foods[i].barcode && foods[i].barcode === barcode) return foods[i];
+    }
+    return null;
+  }
+
   function searchFoods(query, limit) {
     var lower = query.trim().toLowerCase();
     if (!lower) return [];
@@ -247,7 +255,8 @@
       kcal: data.kcal,
       protein: data.protein,
       fat: data.fat,
-      carbs: data.carbs
+      carbs: data.carbs,
+      barcode: data.barcode || null
     };
     foods.push(food);
     saveFoods(foods);
@@ -263,6 +272,7 @@
     food.protein = data.protein;
     food.fat = data.fat;
     food.carbs = data.carbs;
+    if (data.barcode !== undefined) food.barcode = data.barcode;
     saveFoods(foods);
     return foods;
   }
@@ -1642,8 +1652,50 @@
       scan.form.hidden = true;
     }
 
+    function populateScanForm(data, barcode, sourceLabel, allowSaveToggle) {
+      scan.nameInput.value = data.name;
+      scan.kcalInput.value = data.kcal;
+      scan.proteinInput.value = data.protein;
+      scan.fatInput.value = data.fat;
+      scan.carbsInput.value = data.carbs;
+      scan.gramsInput.value = "100";
+      scan.form.setAttribute("data-barcode", barcode);
+      if (scan.barcodeLabelEl) scan.barcodeLabelEl.textContent = barcode;
+      if (scan.sourceChipEl) scan.sourceChipEl.textContent = sourceLabel;
+
+      if (allowSaveToggle) {
+        scan.saveToDbCheckbox.checked = true;
+        scan.saveToDbCheckbox.parentElement.hidden = false;
+      } else {
+        // Déjà dans la base locale : pas besoin de reproposer la case.
+        scan.saveToDbCheckbox.checked = false;
+        scan.saveToDbCheckbox.parentElement.hidden = true;
+      }
+
+      var looksEmpty = data.kcal === 0 && data.protein === 0 && data.fat === 0 && data.carbs === 0;
+      scan.incompleteEl.hidden = !looksEmpty || !allowSaveToggle;
+
+      scan.form.hidden = false;
+
+      // Le nom vient parfois d'une base communautaire imparfaite : on
+      // sélectionne le texte pour que corriger soit aussi simple que de
+      // se mettre à taper.
+      scan.nameInput.focus();
+      scan.nameInput.select();
+    }
+
     function handleBarcode(barcode) {
       resetScanPanel();
+
+      // 1) Ta propre base d'abord — reconnaissance instantanée, fonctionne
+      // même hors-ligne, aucun appel réseau nécessaire.
+      var localMatch = findFoodByBarcode(loadFoods(), barcode);
+      if (localMatch) {
+        populateScanForm(localMatch, barcode, "⚡ Ta base", false);
+        return;
+      }
+
+      // 2) Sinon on interroge Open Food Facts.
       scan.statusEl.hidden = false;
       scan.statusEl.textContent = "Recherche du produit (code " + barcode + ")…";
 
@@ -1652,32 +1704,14 @@
 
         if (!result.found) {
           scan.notFoundEl.hidden = false;
+          scan.notFoundEl.setAttribute("data-barcode", result.barcode);
           scan.notFoundMsgEl.textContent = result.networkError ?
             "Impossible de contacter Open Food Facts — vérifie ta connexion internet." :
-            "Produit introuvable dans Open Food Facts (code-barres : " + result.barcode + ").";
+            "Produit introuvable dans Open Food Facts (code-barres : " + result.barcode + "). Ajoute-le une fois à ta base : il sera reconnu instantanément la prochaine fois, même hors-ligne.";
           return;
         }
 
-        scan.nameInput.value = result.name;
-        scan.kcalInput.value = result.kcal;
-        scan.proteinInput.value = result.protein;
-        scan.fatInput.value = result.fat;
-        scan.carbsInput.value = result.carbs;
-        scan.gramsInput.value = "100";
-        scan.saveToDbCheckbox.checked = true;
-        scan.form.setAttribute("data-barcode", result.barcode);
-        if (scan.barcodeLabelEl) scan.barcodeLabelEl.textContent = result.barcode;
-
-        var looksEmpty = result.kcal === 0 && result.protein === 0 && result.fat === 0 && result.carbs === 0;
-        scan.incompleteEl.hidden = !looksEmpty;
-
-        scan.form.hidden = false;
-
-        // Le nom vient d'une base communautaire et est parfois erroné
-        // (mauvaise association code-barres ↔ produit) : on sélectionne le
-        // texte pour que corriger soit aussi simple que de se mettre à taper.
-        scan.nameInput.focus();
-        scan.nameInput.select();
+        populateScanForm(result, result.barcode, "Open Food Facts", true);
       });
     }
 
@@ -1690,6 +1724,14 @@
       resetScanPanel();
       cfg.modeManual.checked = true;
       cfg.modeManual.dispatchEvent(new Event("change"));
+    });
+
+    scan.createFromNotFoundBtn.addEventListener("click", function () {
+      var barcode = scan.notFoundEl.getAttribute("data-barcode") || "";
+      scan.notFoundEl.hidden = true;
+      populateScanForm({ name: "", kcal: 0, protein: 0, fat: 0, carbs: 0 }, barcode, "Nouveau produit", true);
+      scan.nameInput.value = "";
+      scan.incompleteEl.hidden = true;
     });
 
     scan.form.addEventListener("submit", function (e) {
@@ -1706,6 +1748,7 @@
         fat: parseFloat(scan.fatInput.value) || 0,
         carbs: parseFloat(scan.carbsInput.value) || 0
       };
+      var barcodeVal = scan.form.getAttribute("data-barcode") || null;
 
       var entry = {
         name: name,
@@ -1714,7 +1757,7 @@
         fat: round1(per100.fat * factor),
         carbs: round1(per100.carbs * factor),
         grams: grams,
-        barcode: scan.form.getAttribute("data-barcode") || null
+        barcode: barcodeVal
       };
 
       var dateKey = cfg.getDateKey();
@@ -1722,9 +1765,13 @@
       addFoodToDay(dateKey, entry);
 
       if (scan.saveToDbCheckbox.checked) {
-        var existing = findFoodByName(loadFoods(), name);
+        var foods = loadFoods();
+        var existing = findFoodByName(foods, name);
         if (!existing) {
-          createFood({ name: name, kcal: per100.kcal, protein: per100.protein, fat: per100.fat, carbs: per100.carbs });
+          createFood({ name: name, kcal: per100.kcal, protein: per100.protein, fat: per100.fat, carbs: per100.carbs, barcode: barcodeVal });
+        } else if (barcodeVal && !existing.barcode) {
+          // Aliment déjà présent par nom mais pas encore lié à ce code-barres.
+          updateFoodRecord(existing.id, { name: existing.name, kcal: existing.kcal, protein: existing.protein, fat: existing.fat, carbs: existing.carbs, barcode: barcodeVal });
         }
       }
 
@@ -2148,11 +2195,12 @@
     var html = "";
     for (var i = 0; i < foods.length; i++) {
       var f = foods[i];
+      var barcodeTag = f.barcode ? ' · 📷 ' + f.barcode : '';
       html +=
         '<li class="food-db-row">' +
           '<div class="fdb-info">' +
             '<span class="fdb-name">' + escapeHtml(f.name) + '</span>' +
-            '<span class="fdb-macros">' + f.kcal + ' kcal · P' + f.protein + ' L' + f.fat + ' G' + f.carbs + ' /100g</span>' +
+            '<span class="fdb-macros">' + f.kcal + ' kcal · P' + f.protein + ' L' + f.fat + ' G' + f.carbs + ' /100g' + barcodeTag + '</span>' +
           '</div>' +
           '<div class="fdb-actions">' +
             '<button type="button" class="icon-btn" data-edit="' + f.id + '" aria-label="Modifier">✎</button>' +
@@ -2310,6 +2358,7 @@
         statusEl: $("scanStatus"),
         notFoundEl: $("scanNotFound"),
         notFoundMsgEl: $("scanNotFoundMsg"),
+        createFromNotFoundBtn: $("scanCreateFromScan"),
         useManualBtn: $("scanUseManual"),
         form: $("scanAddForm"),
         nameInput: $("scanProductName"),
@@ -2320,7 +2369,8 @@
         gramsInput: $("scanGrams"),
         saveToDbCheckbox: $("scanSaveToDb"),
         incompleteEl: $("scanIncomplete"),
-        barcodeLabelEl: $("scanBarcodeLabel")
+        barcodeLabelEl: $("scanBarcodeLabel"),
+        sourceChipEl: $("scanSourceChip")
       },
       getDateKey: function () { var r = ensureTodayRecord(); return r ? r.date : null; },
       onAdded: refreshTracker
@@ -2354,6 +2404,7 @@
         statusEl: $("detailScanStatus"),
         notFoundEl: $("detailScanNotFound"),
         notFoundMsgEl: $("detailScanNotFoundMsg"),
+        createFromNotFoundBtn: $("detailScanCreateFromScan"),
         useManualBtn: $("detailScanUseManual"),
         form: $("detailScanAddForm"),
         nameInput: $("detailScanProductName"),
@@ -2364,7 +2415,8 @@
         gramsInput: $("detailScanGrams"),
         saveToDbCheckbox: $("detailScanSaveToDb"),
         incompleteEl: $("detailScanIncomplete"),
-        barcodeLabelEl: $("detailScanBarcodeLabel")
+        barcodeLabelEl: $("detailScanBarcodeLabel"),
+        sourceChipEl: $("detailScanSourceChip")
       },
       getDateKey: function () { return historyState.currentDetailKey; },
       onAdded: function () { renderHistoryDetail(historyState.currentDetailKey); }

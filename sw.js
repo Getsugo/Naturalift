@@ -5,15 +5,15 @@
    sinon les anciens fichiers restent servis depuis le cache.
    ========================================================= */
 
-var CACHE_NAME = "naturalift-v8";
+var CACHE_NAME = "naturalift-v9";
 
 // Chemins relatifs uniquement : indispensable pour un déploiement
 // GitHub Pages sous <username>.github.io/<repo>/.
 var APP_SHELL = [
   "./",
   "./index.html",
-  "./style.css?v=8",
-  "./app.js?v=8",
+  "./style.css?v=9",
+  "./app.js?v=9",
   "./manifest.json"
 ];
 
