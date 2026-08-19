@@ -2510,6 +2510,12 @@
 
     loadExistingProfile();
 
+    // Une fois le profil configuré, l'écran d'accueil utile au quotidien
+    // est le Suivi, pas l'onglet Objectif (consulté une fois puis oublié).
+    if (readJSON(STORAGE_PROFILE)) {
+      switchTab("track");
+    }
+
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", function () {
         var swUrl = new URL("sw.js", document.baseURI).href;
