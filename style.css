@@ -105,8 +105,8 @@ main{ flex: 1; }
   background: var(--surface-2);
   border: 1px solid var(--border);
   color: var(--text);
-  width: 34px;
-  height: 34px;
+  width: 42px;
+  height: 42px;
   border-radius: 50%;
   font-size: 16px;
   cursor: pointer;
@@ -206,7 +206,15 @@ main{ flex: 1; }
   color: #0b0d10;
 }
 
-.tab:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible, label.seg-btn:focus-within{
+.tab:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible{
+  outline: 2px solid var(--cyan);
+  outline-offset: 2px;
+}
+
+/* Les boutons segmentés sont des labels collés à un radio caché :
+   le focus est sur le radio, on l'affiche sur le label qui suit.
+   (Règle séparée : un sélecteur non reconnu invaliderait toute la liste.) */
+.segmented input[type="radio"]:focus-visible + .seg-btn{
   outline: 2px solid var(--cyan);
   outline-offset: 2px;
 }
@@ -922,10 +930,12 @@ form.scan-result.food-preview{
   background: transparent;
   border: none;
   color: var(--text-muted);
-  font-size: 18px;
+  font-size: 20px;
   line-height: 1;
   cursor: pointer;
   padding: 4px 6px;
+  min-width: 44px;
+  min-height: 44px;
 }
 
 .food-item .food-del:hover{ color: var(--red); }
@@ -1258,8 +1268,8 @@ form.scan-result.food-preview{
   background: transparent;
   border: 1px solid var(--border);
   color: var(--text-muted);
-  width: 32px;
-  height: 32px;
+  width: 42px;
+  height: 42px;
   border-radius: var(--radius-sm);
   font-size: 14px;
   cursor: pointer;
@@ -1403,10 +1413,12 @@ form.scan-result.food-preview{
   background: transparent;
   border: none;
   color: var(--text-muted);
-  font-size: 18px;
+  font-size: 20px;
   line-height: 1;
   cursor: pointer;
   padding: 4px 6px;
+  min-width: 44px;
+  min-height: 44px;
 }
 
 .weight-row .wr-del:hover{ color: var(--red); }

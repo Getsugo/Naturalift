@@ -10,7 +10,7 @@
 <link rel="manifest" href="./manifest.json">
 <link rel="icon" href="./icon-192.png">
 <link rel="apple-touch-icon" href="./icon-192.png">
-<link rel="stylesheet" href="./style.css?v=11">
+<link rel="stylesheet" href="./style.css?v=12">
 </head>
 <body>
 
@@ -515,6 +515,15 @@
           </div>
         </div>
 
+        <div id="profileWeightSync" class="card suggestion-card" hidden>
+          <div class="suggestion-header">
+            <span class="suggestion-icon">⚖</span>
+            <h2 class="card-title-sm">Ton poids a changé</h2>
+          </div>
+          <p id="profileWeightSyncText" class="suggestion-text"></p>
+          <button type="button" id="profileWeightSyncBtn" class="btn-primary">Mettre à jour mes cibles</button>
+        </div>
+
         <div id="weightSuggestion" class="card suggestion-card" hidden>
           <div class="suggestion-header">
             <span class="suggestion-icon">💡</span>
@@ -733,6 +742,6 @@
      si une connexion internet est disponible ; l'app détecte son absence et
      bascule proprement sur un message d'indisponibilité sinon). -->
 <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js" defer></script>
-<script src="./app.js?v=11" defer></script>
+<script src="./app.js?v=12" defer></script>
 </body>
 </html>

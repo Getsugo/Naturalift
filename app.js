@@ -127,13 +127,47 @@
   }
 
   function readJSON(key) {
-    var raw = localStorage.getItem(key);
+    var raw = null;
+    try { raw = localStorage.getItem(key); } catch (e) { return null; }
     if (!raw) return null;
-    try { return JSON.parse(raw); } catch (e) { return null; }
+    try { return JSON.parse(raw); } catch (e2) { return null; }
   }
 
+  // Toutes les écritures passent par ici : si le stockage est plein
+  // (souvent à cause des photos), on prévient au lieu de perdre la
+  // donnée en silence. Retourne true si l'écriture a réussi.
+  var lastStorageAlert = 0;
   function writeJSON(key, value) {
-    localStorage.setItem(key, JSON.stringify(value));
+    try {
+      localStorage.setItem(key, JSON.stringify(value));
+      return true;
+    } catch (e) {
+      var now = Date.now();
+      if (now - lastStorageAlert > 3000) {
+        lastStorageAlert = now;
+        window.alert("Stockage de l'appareil plein : la dernière modification n'a PAS été enregistrée.\n\nExporte une sauvegarde (Aliments > Sauvegarde), puis supprime des photos de repas ou d'anciennes journées.");
+      }
+      return false;
+    }
+  }
+
+  // Recherche tolérante : ignore majuscules, accents et ligatures,
+  // pour que "oeuf" trouve "Œuf" et "pates" trouve "Pâtes".
+  function normalizeText(str) {
+    var s = String(str || "").toLowerCase().replace(/œ/g, "oe").replace(/æ/g, "ae");
+    if (s.normalize) s = s.normalize("NFD").replace(/[̀-ͯ]/g, "");
+    return s.replace(/\s+/g, " ").trim();
+  }
+
+  // Vrai si chaque mot de la recherche apparaît dans le nom, dans
+  // n'importe quel ordre : "poulet blanc" trouve "Blanc de poulet".
+  function matchesQuery(name, query) {
+    var n = normalizeText(name);
+    var words = normalizeText(query).split(" ");
+    for (var i = 0; i < words.length; i++) {
+      if (words[i] && n.indexOf(words[i]) === -1) return false;
+    }
+    return true;
   }
 
   function escapeHtml(str) {
@@ -207,10 +241,10 @@
   }
 
   function findFoodByName(foods, name) {
-    var lower = name.trim().toLowerCase();
-    if (!lower) return null;
+    var wanted = normalizeText(name);
+    if (!wanted) return null;
     for (var i = 0; i < foods.length; i++) {
-      if (foods[i].name.trim().toLowerCase() === lower) return foods[i];
+      if (normalizeText(foods[i].name) === wanted) return foods[i];
     }
     return null;
   }
@@ -231,18 +265,22 @@
   }
 
   function searchFoods(query, limit) {
-    var lower = query.trim().toLowerCase();
-    if (!lower) return [];
+    var q = normalizeText(query);
+    if (!q) return [];
     var usage = loadUsage();
     var foods = loadFoods().slice();
     foods.sort(function (a, b) {
+      // les noms qui commencent par la recherche d'abord, puis les plus utilisés
+      var pa = normalizeText(a.name).indexOf(q) === 0 ? 1 : 0;
+      var pb = normalizeText(b.name).indexOf(q) === 0 ? 1 : 0;
+      if (pb !== pa) return pb - pa;
       var ua = usage[a.id] || 0, ub = usage[b.id] || 0;
-      if (ub !== ua) return ub - ua; // les plus utilisés d'abord
+      if (ub !== ua) return ub - ua;
       return a.name.localeCompare(b.name, "fr");
     });
     var matches = [];
     for (var i = 0; i < foods.length && matches.length < limit; i++) {
-      if (foods[i].name.toLowerCase().indexOf(lower) !== -1) matches.push(foods[i]);
+      if (matchesQuery(foods[i].name, q)) matches.push(foods[i]);
     }
     return matches;
   }
@@ -370,7 +408,7 @@
       return '<p class="weight-chart-empty">Ajoute au moins deux pesées pour voir apparaître un graphique.</p>';
     }
 
-    var W = 320, H = 150, padL = 34, padR = 10, padT = 10, padB = 10;
+    var W = 320, H = 165, padL = 34, padR = 12, padT = 10, padB = 24;
     var chartW = W - padL - padR;
     var chartH = H - padT - padB;
 
@@ -417,14 +455,26 @@
         '<text x="2" y="' + (y + 3).toFixed(1) + '" font-size="8" fill="#8a93a3" font-family="ui-monospace,monospace">' + wVal.toFixed(1) + '</text>';
     }
 
+    // Dates sous le graphique : première, milieu, dernière pesée.
+    var xLabels = "";
+    var labelIdx = [0, Math.floor((entries.length - 1) / 2), entries.length - 1];
+    var usedIdx = {};
+    for (var li = 0; li < labelIdx.length; li++) {
+      var idx = labelIdx[li];
+      if (usedIdx[idx]) continue;
+      usedIdx[idx] = true;
+      var anchor = li === 0 ? "start" : (li === labelIdx.length - 1 ? "end" : "middle");
+      xLabels += '<text x="' + rawPts[idx].x.toFixed(1) + '" y="' + (H - 6) + '" font-size="8" fill="#8a93a3" text-anchor="' + anchor + '" font-family="ui-monospace,monospace">' + formatDateShort(entries[idx].date) + '</text>';
+    }
+
     var dots = "";
     for (var d = 0; d < rawPts.length; d++) {
       dots += '<circle cx="' + rawPts[d].x.toFixed(1) + '" cy="' + rawPts[d].y.toFixed(1) + '" r="2.2" fill="#8a93a3" />';
     }
 
     return (
-      '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" role="img" aria-label="Courbe de poids">' +
-        gridLines +
+      '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Courbe de poids">' +
+        gridLines + xLabels +
         '<polyline points="' + toPolyline(rawPts) + '" fill="none" stroke="#8a93a3" stroke-width="1" opacity="0.5" />' +
         dots +
         '<polyline points="' + toPolyline(trendPts) + '" fill="none" stroke="#c6ff3d" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />' +
@@ -491,6 +541,43 @@
     return "Ta tendance de poids (" + trendLabel + ") est plus rapide que ce qui est recommandé pour un naturel — risque de perte musculaire ou de prise de gras superflue. Envisage de " + actionFast + " tes calories d'environ " + kcalGap + " kcal/jour.";
   }
 
+  // Moyenne des pesées des 7 derniers jours : plus fiable qu'une pesée
+  // isolée pour décider de recalculer les cibles.
+  function recentAverageWeight(sorted) {
+    var cutoff = addDays(new Date(), -7).getTime();
+    var recent = sorted.filter(function (e) { return parseDateKey(e.date).getTime() >= cutoff; });
+    if (recent.length === 0) return null;
+    var sum = recent.reduce(function (acc, e) { return acc + e.weight; }, 0);
+    return round1(sum / recent.length);
+  }
+
+  var PROFILE_WEIGHT_SYNC_THRESHOLD = 1; // kg d'écart avant de proposer la mise à jour
+
+  function refreshProfileWeightSync(weights, profile) {
+    var card = $("profileWeightSync");
+    var avg = recentAverageWeight(weights);
+    if (!profile || avg === null || Math.abs(avg - profile.weight) < PROFILE_WEIGHT_SYNC_THRESHOLD) {
+      card.hidden = true;
+      return;
+    }
+    card.setAttribute("data-weight", avg);
+    $("profileWeightSyncText").textContent =
+      "Tes cibles sont calculées pour " + String(profile.weight).replace(".", ",") + " kg, " +
+      "mais ta moyenne des 7 derniers jours est de " + String(avg).replace(".", ",") + " kg. " +
+      "Protéines, lipides et calories dépendent de ton poids : mets-les à jour pour rester juste.";
+    card.hidden = false;
+  }
+
+  function handleProfileWeightSync() {
+    var profile = readJSON(STORAGE_PROFILE);
+    var avg = parseFloat($("profileWeightSync").getAttribute("data-weight"));
+    if (!profile || !avg) return;
+    profile.weight = avg;
+    applyProfile(profile);
+    loadExistingProfile();
+    refreshWeightPanel();
+  }
+
   function renderWeightList(weights) {
     var sorted = weights.slice().sort(function (a, b) { return a.date < b.date ? 1 : -1; });
     var recent = sorted.slice(0, 30);
@@ -546,6 +633,7 @@
     $("weightChart").innerHTML = buildWeightChartSvg(windowEntries);
 
     var profile = readJSON(STORAGE_PROFILE);
+    refreshProfileWeightSync(weights, profile);
     var suggestionEl = $("weightSuggestion");
     var msg = profile ? buildWeightSuggestion(computeWeightTrendPerWeek(weights), profile.objective, stats.current) : null;
     if (msg) {
@@ -1149,7 +1237,7 @@
   }
 
   function saveHistory(history) {
-    writeJSON(STORAGE_HISTORY, pruneHistory(history));
+    return writeJSON(STORAGE_HISTORY, pruneHistory(history));
   }
 
   function getDayRecord(dateKey) {
@@ -1185,7 +1273,7 @@
     if (!record) return null;
     entry.id = genId("entry");
     record.entries.push(entry);
-    saveHistory(history);
+    if (!saveHistory(history)) return null; // stockage plein : rien n'est enregistré
     return record;
   }
 
@@ -1399,6 +1487,22 @@
     $("results").hidden = false;
   }
 
+  // Calcule et enregistre les cibles d'un profil. La journée en cours
+  // prend les nouvelles cibles (elle n'est pas terminée) ; les journées
+  // passées gardent les leurs, pour que l'historique reste exact.
+  function applyProfile(profile) {
+    var targets = computeTargets(profile);
+    profile.targets = targets;
+    writeJSON(STORAGE_PROFILE, profile);
+
+    var todayRecord = getDayRecord(todayKey());
+    if (todayRecord) {
+      todayRecord.targets = targets;
+      upsertDayRecord(todayRecord);
+    }
+    return targets;
+  }
+
   function openSettings() { $("settingsOverlay").hidden = false; }
   function closeSettings() { $("settingsOverlay").hidden = true; }
 
@@ -1415,15 +1519,7 @@
       objective: $("objective").value
     };
 
-    var targets = computeTargets(profile);
-    profile.targets = targets;
-    writeJSON(STORAGE_PROFILE, profile);
-
-    var todayRecord = getDayRecord(todayKey());
-    if (todayRecord && todayRecord.entries.length === 0) {
-      todayRecord.targets = targets;
-      upsertDayRecord(todayRecord);
-    }
+    var targets = applyProfile(profile);
 
     $("noProfileGoal").hidden = true;
     renderResults(targets, sex);
@@ -1605,7 +1701,7 @@
 
       var dateKey = cfg.getDateKey();
       if (!dateKey) return;
-      addFoodToDay(dateKey, entry);
+      if (!addFoodToDay(dateKey, entry)) return;
       bumpUsage(match.id);
       renderFrequentChips(cfg);
 
@@ -1639,14 +1735,9 @@
         if (photo) entry.photo = photo;
       }
 
-      try {
-        addFoodToDay(dateKey, entry);
-      } catch (err) {
-        // Le plus souvent une photo trop lourde qui dépasse le quota du
-        // localStorage : on prévient plutôt que de perdre l'entrée en silence.
-        window.alert("Impossible d'enregistrer (stockage local plein). Réessaie sans photo, ou libère de la place dans Aliments > Sauvegarde.");
-        return;
-      }
+      // Échec = stockage plein (souvent la photo) : writeJSON a déjà
+      // prévenu, on garde le formulaire rempli pour réessayer sans photo.
+      if (!addFoodToDay(dateKey, entry)) return;
 
       cfg.manualForm.reset();
       if (cfg.photoCtrl) cfg.photoCtrl.clear();
@@ -1688,11 +1779,12 @@
 
       scan.form.hidden = false;
 
-      // Le nom vient parfois d'une base communautaire imparfaite : on
-      // sélectionne le texte pour que corriger soit aussi simple que de
-      // se mettre à taper.
-      scan.nameInput.focus();
-      scan.nameInput.select();
+      // Produit connu : le seul champ à remplir est la quantité, on y
+      // place le curseur (sinon le clavier cache les macros à vérifier).
+      // Produit nouveau sans nom : on commence par le nom.
+      var focusEl = data.name ? scan.gramsInput : scan.nameInput;
+      focusEl.focus();
+      focusEl.select();
     }
 
     function handleBarcode(barcode) {
@@ -1773,7 +1865,7 @@
 
       var dateKey = cfg.getDateKey();
       if (!dateKey) return;
-      addFoodToDay(dateKey, entry);
+      if (!addFoodToDay(dateKey, entry)) return;
 
       if (scan.saveToDbCheckbox.checked) {
         var foods = loadFoods();
@@ -2083,6 +2175,7 @@
       return {
         daysLogged: 0,
         totalDays: nDays,
+        successCount: 0,
         regularityPct: 0,
         avgConsumed: { kcal: 0, protein: 0, fat: 0, carbs: 0 },
         avgTarget: { kcal: 0, protein: 0, fat: 0, carbs: 0 },
@@ -2123,6 +2216,7 @@
     return {
       daysLogged: daysLogged,
       totalDays: nDays,
+      successCount: successCount,
       regularityPct: regularityPct,
       avgConsumed: avgConsumed,
       avgTarget: avgTarget,
@@ -2151,12 +2245,14 @@
 
     $(prefix + "Gauges").innerHTML = gaugesHtml(stats.avgConsumed, stats.avgTarget, true);
 
-    var weeklyTargetTotal = stats.avgTarget.kcal * stats.totalDays;
+    // La cible totale ne compte que les jours renseignés : comparer ce
+    // qui a été mangé sur 4 jours à une cible de 7 jours fausserait tout.
+    var targetTotalLogged = stats.avgTarget.kcal * stats.daysLogged;
     var cells = [
-      { label: "Total kcal", value: round(stats.totalConsumed.kcal).toLocaleString("fr-FR") + " / " + round(weeklyTargetTotal).toLocaleString("fr-FR") },
+      { label: "Total kcal (jours renseignés)", value: round(stats.totalConsumed.kcal).toLocaleString("fr-FR") + " / " + round(targetTotalLogged).toLocaleString("fr-FR") },
       { label: "Total protéines", value: round(stats.totalConsumed.protein) + " g" },
       { label: "Moy. kcal / jour", value: round(stats.avgConsumed.kcal) + " kcal" },
-      { label: "Jours dans la cible", value: Math.round(stats.regularityPct * stats.totalDays / 100) + " / " + stats.totalDays }
+      { label: "Jours dans la cible", value: stats.successCount + " / " + stats.totalDays }
     ];
     var html = "";
     for (var i = 0; i < cells.length; i++) {
@@ -2188,7 +2284,7 @@
   var foodsEditState = { editingId: null };
 
   function refreshFoodsPanel() {
-    var filterText = $("foodsFilter").value.trim().toLowerCase();
+    var filterText = $("foodsFilter").value.trim();
     var usage = loadUsage();
     var foods = loadFoods().slice();
     foods.sort(function (a, b) {
@@ -2198,7 +2294,7 @@
     });
 
     if (filterText) {
-      foods = foods.filter(function (f) { return f.name.toLowerCase().indexOf(filterText) !== -1; });
+      foods = foods.filter(function (f) { return matchesQuery(f.name, filterText); });
     }
 
     $("foodsDbEmpty").hidden = foods.length > 0;
@@ -2485,6 +2581,7 @@
 
     $("weightForm").addEventListener("submit", handleWeightSubmit);
     $("weightGoToCalc").addEventListener("click", function () { openSettings(); });
+    $("profileWeightSyncBtn").addEventListener("click", handleProfileWeightSync);
 
     $("exportDataBtn").addEventListener("click", exportAllData);
     $("importDataBtn").addEventListener("click", function () { $("importDataFile").click(); });
@@ -2514,6 +2611,12 @@
     // est le Suivi, pas l'onglet Objectif (consulté une fois puis oublié).
     if (readJSON(STORAGE_PROFILE)) {
       switchTab("track");
+    }
+
+    // Demande au navigateur de ne pas effacer les données de l'appli
+    // quand l'espace manque (accordé d'office aux PWA installées).
+    if (navigator.storage && navigator.storage.persist) {
+      navigator.storage.persist().catch(function () { /* non bloquant */ });
     }
 
     if ("serviceWorker" in navigator) {
