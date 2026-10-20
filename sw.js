@@ -9,7 +9,7 @@
    ou supprimé un fichier).
    ========================================================= */
 
-var CACHE_NAME = "naturalift-v13";
+var CACHE_NAME = "naturalift-v14";
 
 // Chemins relatifs uniquement : indispensable pour un déploiement
 // GitHub Pages sous <username>.github.io/<repo>/.
@@ -53,9 +53,14 @@ self.addEventListener("activate", function (event) {
   );
 });
 
+// Module de secours du scanner (gros fichier, rarement utilisé) : pas
+// téléchargé à l'installation, mais gardé en cache dès son 1er usage.
+var LAZY_ASSETS = ["./html5-qrcode.min.js"];
+
 function isStaticAsset(url) {
-  for (var i = 0; i < STATIC_ASSETS.length; i++) {
-    if (url.indexOf(STATIC_ASSETS[i].replace("./", "")) !== -1) return true;
+  var all = STATIC_ASSETS.concat(LAZY_ASSETS);
+  for (var i = 0; i < all.length; i++) {
+    if (url.indexOf(all[i].replace("./", "")) !== -1) return true;
   }
   return false;
 }
@@ -66,20 +71,22 @@ self.addEventListener("fetch", function (event) {
 
   var url = request.url;
 
-  // Requêtes externes (bibliothèque du scanner, API Open Food Facts) :
+  // Requêtes externes (API Open Food Facts) :
   // on laisse le navigateur les gérer normalement — sinon un appel
   // JSON échoué hors-ligne renverrait la page HTML par erreur.
   if (url.indexOf(self.location.origin) !== 0) {
     return;
   }
 
-  // Icônes : cache d'abord, elles ne changent jamais.
+  // Icônes et module du scanner : cache d'abord, ils ne changent jamais.
   if (isStaticAsset(url)) {
     event.respondWith(
       caches.match(request).then(function (cached) {
         return cached || fetch(request).then(function (response) {
-          var copy = response.clone();
-          caches.open(CACHE_NAME).then(function (cache) { cache.put(request, copy); });
+          if (response && response.ok) {
+            var copy = response.clone();
+            caches.open(CACHE_NAME).then(function (cache) { cache.put(request, copy); });
+          }
           return response;
         });
       })

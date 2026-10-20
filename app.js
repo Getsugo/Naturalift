@@ -24,7 +24,7 @@
   var MAX_SUGGESTIONS = 8;
   // API v2 + liste de champs : réponse quelques Ko au lieu de ~100 Ko.
   var OFF_API_BASE = "https://world.openfoodfacts.org/api/v2/product/";
-  var OFF_FIELDS = "product_name,product_name_fr,generic_name,generic_name_fr,brands,nutriments";
+  var OFF_FIELDS = "product_name,product_name_fr,generic_name,generic_name_fr,brands,nutriments,serving_quantity";
 
   /* ---------------------------------------------------------
      Constantes métier
@@ -89,6 +89,21 @@
     { id: "d-lentilles", name: "Lentilles cuites", kcal: 116, protein: 9, fat: 0.4, carbs: 20 },
     { id: "d-whey", name: "Whey protéine (poudre)", kcal: 380, protein: 75, fat: 6, carbs: 8 }
   ];
+
+  // Portions usuelles des aliments de départ (« 2 œufs » plutôt que 100 g).
+  var DEFAULT_PORTIONS = {
+    "d-oeuf": { label: "œuf", grams: 50 },
+    "d-banane": { label: "banane", grams: 120 },
+    "d-paincomplet": { label: "tranche", grams: 35 },
+    "d-yaourtgrec": { label: "pot", grams: 150 },
+    "d-whey": { label: "dose", grams: 30 },
+    "d-huileolive": { label: "c. à soupe", grams: 10 },
+    "d-beurrecacahuete": { label: "c. à soupe", grams: 15 },
+    "d-amandes": { label: "poignée", grams: 30 },
+    "d-fromageblanc": { label: "pot", grams: 100 },
+    "d-thon": { label: "boîte égouttée", grams: 112 }
+  };
+  var STORAGE_PORTIONS_SEEDED = "nl_portions_seeded_v1";
 
   /* ---------------------------------------------------------
      Utilitaires génériques
@@ -173,10 +188,23 @@
     return true;
   }
 
+  // Échappe aussi les guillemets : indispensable quand le texte va dans
+  // un attribut (aria-label="…"), sinon un nom de produit contenant "
+  // (Open Food Facts est une base communautaire) casserait la page.
   function escapeHtml(str) {
-    var div = document.createElement("div");
-    div.textContent = str;
-    return div.innerHTML;
+    return String(str === undefined || str === null ? "" : str)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  // Une photo de repas n'est acceptée que si c'est une vraie image
+  // encodée (data:image/…;base64). Tout le reste est ignoré.
+  var SAFE_PHOTO_RE = /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+\/=]+$/;
+  function safePhoto(src) {
+    return (typeof src === "string" && src.length < 400000 && SAFE_PHOTO_RE.test(src)) ? src : null;
   }
 
   function genId(prefix) {
@@ -360,10 +388,27 @@
   function loadFoods() {
     var foods = readJSON(STORAGE_FOODS);
     if (!foods) {
-      foods = DEFAULT_FOODS.slice();
+      foods = DEFAULT_FOODS.map(function (f) {
+        var copy = { id: f.id, name: f.name, kcal: f.kcal, protein: f.protein, fat: f.fat, carbs: f.carbs };
+        if (DEFAULT_PORTIONS[f.id]) copy.portion = DEFAULT_PORTIONS[f.id];
+        return copy;
+      });
       writeJSON(STORAGE_FOODS, foods);
+      writeJSON(STORAGE_PORTIONS_SEEDED, true);
     }
     return foods;
+  }
+
+  // Une seule fois : ajoute les portions par défaut aux aliments de
+  // départ d'une base déjà existante (sans toucher à ce que tu as modifié).
+  function seedDefaultPortions() {
+    if (readJSON(STORAGE_PORTIONS_SEEDED)) return;
+    var foods = loadFoods();
+    for (var i = 0; i < foods.length; i++) {
+      if (DEFAULT_PORTIONS[foods[i].id] && foods[i].portion === undefined) foods[i].portion = DEFAULT_PORTIONS[foods[i].id];
+    }
+    saveFoods(foods);
+    writeJSON(STORAGE_PORTIONS_SEEDED, true);
   }
 
   function saveFoods(foods) {
@@ -426,6 +471,7 @@
       carbs: data.carbs,
       barcode: data.barcode || null
     };
+    if (data.portion) food.portion = data.portion;
     foods.push(food);
     saveFoods(foods);
     return foods;
@@ -441,6 +487,10 @@
     food.fat = data.fat;
     food.carbs = data.carbs;
     if (data.barcode !== undefined) food.barcode = data.barcode;
+    if (data.portion !== undefined) {
+      if (data.portion) food.portion = data.portion;
+      else delete food.portion;
+    }
     saveFoods(foods);
     return foods;
   }
@@ -721,7 +771,7 @@
         '<li class="weight-row">' +
           '<span class="wr-date">' + label + '</span>' +
           '<span class="wr-value">' + fmtNum(w.weight) + ' kg</span>' +
-          '<button type="button" class="wr-del" data-date="' + w.date + '" aria-label="Supprimer">×</button>' +
+          '<button type="button" class="wr-del" data-date="' + escapeHtml(w.date) + '" aria-label="Supprimer">×</button>' +
         '</li>';
     }
     $("weightList").innerHTML = html;
@@ -896,7 +946,7 @@
       if (parts.length === 0) continue;
       var label = e.date === today ? "Aujourd'hui" : formatDateShort(e.date);
       html += '<li class="weight-row measurement-row"><span class="wr-date">' + label + '</span><span class="wr-value">' + parts.join(" · ") + '</span>' +
-        '<button type="button" class="wr-del" data-date="' + e.date + '" aria-label="Supprimer ces mensurations">×</button></li>';
+        '<button type="button" class="wr-del" data-date="' + escapeHtml(e.date) + '" aria-label="Supprimer ces mensurations">×</button></li>';
     }
     $("measurementsList").innerHTML = html;
 
@@ -965,7 +1015,7 @@
     var items = [];
     for (var i = 0; i < entries.length; i++) {
       var e = entries[i];
-      items.push({ name: e.name, kcal: e.kcal, protein: e.protein, fat: e.fat, carbs: e.carbs, grams: e.grams || null });
+      items.push(copyEntryFields(e));
     }
     favs.push({ id: genId("fav"), name: name, items: items });
     saveFavorites(favs);
@@ -994,7 +1044,7 @@
     for (var i = 0; i < favs.length; i++) {
       var f = favs[i];
       html +=
-        '<li><button type="button" class="favorite-row" data-id="' + f.id + '">' +
+        '<li><button type="button" class="favorite-row" data-id="' + escapeHtml(f.id) + '">' +
           '<span class="fav-icon">☆</span>' +
           '<span class="fav-name">' + escapeHtml(f.name) +
             '<span class="fav-sub">' + f.items.length + ' aliment' + (f.items.length > 1 ? "s" : "") + '</span>' +
@@ -1018,7 +1068,7 @@
         withUndo([STORAGE_HISTORY], "« " + fav.name + " » ajouté", function () {
           for (var m = 0; m < fav.items.length; m++) {
             var item = fav.items[m];
-            addFoodToDay(record.date, { name: item.name, kcal: item.kcal, protein: item.protein, fat: item.fat, carbs: item.carbs, grams: item.grams });
+            addFoodToDay(record.date, copyEntryFields(item));
           }
         }, refreshTracker);
       });
@@ -1039,7 +1089,7 @@
             '<span class="fdb-macros">' + f.items.length + ' aliment' + (f.items.length > 1 ? "s" : "") + ' · ' + round(favoriteTotalKcal(f)) + ' kcal</span>' +
           '</div>' +
           '<div class="fdb-actions">' +
-            '<button type="button" class="icon-btn icon-danger" data-fav-delete="' + f.id + '" aria-label="Supprimer">×</button>' +
+            '<button type="button" class="icon-btn icon-danger" data-fav-delete="' + escapeHtml(f.id) + '" aria-label="Supprimer">×</button>' +
           '</div>' +
         '</li>';
     }
@@ -1105,7 +1155,7 @@
 
     var html = "";
     for (var i = 0; i < top.length; i++) {
-      html += '<button type="button" class="frequent-chip" data-id="' + top[i].id + '">' + escapeHtml(top[i].name) + '</button>';
+      html += '<button type="button" class="frequent-chip" data-id="' + escapeHtml(top[i].id) + '">' + escapeHtml(top[i].name) + '</button>';
     }
     cfg.frequentListEl.innerHTML = html;
 
@@ -1234,7 +1284,177 @@
     el.style.borderLeftColor = isError ? "var(--red)" : "var(--lime)";
   }
 
+  /* ---------------------------------------------------------
+     Import — chaque donnée est vérifiée et reconstruite champ par
+     champ : un fichier abîmé ou trafiqué ne peut ni casser l'appli
+     ni injecter du code dans la page. Ce qui est invalide est ignoré.
+     --------------------------------------------------------- */
+
+  var ID_RE = /^[A-Za-z0-9_-]{1,80}$/;
+  var DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+  var BARCODE_RE = /^\d{6,14}$/;
+
+  function cleanNum(v, min, max) {
+    var n = typeof v === "number" ? v : parseNum(v);
+    if (isNaN(n) || !isFinite(n) || n < min || n > max) return null;
+    return n;
+  }
+
+  function cleanStr(v, maxLen) {
+    if (typeof v !== "string") return null;
+    var t = v.replace(/[\u0000-\u001f]/g, " ").trim();
+    return t ? t.slice(0, maxLen) : null;
+  }
+
+  function cleanMacros(src, max) {
+    if (!src || typeof src !== "object") return null;
+    var out = {};
+    var keys = ["kcal", "protein", "fat", "carbs"];
+    for (var i = 0; i < keys.length; i++) {
+      var n = cleanNum(src[keys[i]], 0, max);
+      out[keys[i]] = n === null ? 0 : n;
+    }
+    return out;
+  }
+
+  function cleanPortion(src) {
+    if (!src || typeof src !== "object") return null;
+    var label = cleanStr(src.label, 30);
+    var grams = cleanNum(src.grams, 0.1, 5000);
+    return (label && grams) ? { label: label, grams: grams } : null;
+  }
+
+  function cleanEntry(src) {
+    if (!src || typeof src !== "object") return null;
+    var name = cleanStr(src.name, 120);
+    if (!name) return null;
+    var m = cleanMacros(src, 100000);
+    var e = { id: ID_RE.test(src.id) ? src.id : genId("entry"), name: name, kcal: m.kcal, protein: m.protein, fat: m.fat, carbs: m.carbs };
+    var grams = cleanNum(src.grams, 0.1, 100000);
+    if (grams) e.grams = grams;
+    var per100 = cleanMacros(src.per100, 10000);
+    if (per100) e.per100 = per100;
+    if (ID_RE.test(src.foodId)) e.foodId = src.foodId;
+    if (BARCODE_RE.test(src.barcode)) e.barcode = src.barcode;
+    var photo = safePhoto(src.photo);
+    if (photo) e.photo = photo;
+    var pLabel = cleanStr(src.portionLabel, 30);
+    var pQty = cleanNum(src.portionQty, 0.01, 1000);
+    var pGrams = cleanNum(src.portionGrams, 0.1, 5000);
+    if (pLabel && pQty && pGrams) { e.portionLabel = pLabel; e.portionQty = pQty; e.portionGrams = pGrams; }
+    return e;
+  }
+
+  function cleanFood(src) {
+    if (!src || typeof src !== "object") return null;
+    var name = cleanStr(src.name, 120);
+    if (!name) return null;
+    var m = cleanMacros(src, 10000);
+    var f = { id: ID_RE.test(src.id) ? src.id : genId("food"), name: name, kcal: m.kcal, protein: m.protein, fat: m.fat, carbs: m.carbs, barcode: BARCODE_RE.test(src.barcode) ? src.barcode : null };
+    var portion = cleanPortion(src.portion);
+    if (portion) f.portion = portion;
+    return f;
+  }
+
+  function cleanList(arr, fn) {
+    var out = [];
+    if (!(arr instanceof Array)) return out;
+    for (var i = 0; i < arr.length; i++) {
+      var c = fn(arr[i]);
+      if (c) out.push(c);
+    }
+    return out;
+  }
+
+  function sanitizeImport(data) {
+    var out = { app: "NaturaLift" };
+
+    var p = data.profile;
+    if (p && typeof p === "object" && (p.sex === "H" || p.sex === "F") && OBJECTIVE_CONFIG.hasOwnProperty(p.objective)) {
+      var activity = cleanNum(p.activity, 1.2, 1.9);
+      var profile = {
+        sex: p.sex,
+        age: cleanNum(p.age, 14, 90),
+        weight: cleanNum(p.weight, 30, 250),
+        height: cleanNum(p.height, 120, 230),
+        activity: activity === null ? 1.55 : activity,
+        objective: p.objective
+      };
+      var tdee = cleanNum(p.tdeeOverride, 1200, 5500);
+      if (tdee) profile.tdeeOverride = round(tdee);
+      if (profile.age !== null && profile.weight !== null && profile.height !== null) {
+        // Les cibles sont recalculées, jamais reprises du fichier.
+        profile.targets = computeTargets(profile);
+        out.profile = profile;
+      }
+    }
+
+    if (data.history && typeof data.history === "object") {
+      var history = {};
+      var fallbackTargets = out.profile ? out.profile.targets : { kcal: 2000, protein: 150, fat: 70, carbs: 200 };
+      for (var key in data.history) {
+        if (!data.history.hasOwnProperty(key) || !DATE_RE.test(key)) continue;
+        var r = data.history[key];
+        if (!r || typeof r !== "object") continue;
+        var rec = { date: key, entries: cleanList(r.entries, cleanEntry), targets: cleanMacros(r.targets, 100000) || fallbackTargets };
+        if (r.dayType === "training" || r.dayType === "rest") rec.dayType = r.dayType;
+        var water = cleanNum(r.waterMl, 0, 20000);
+        if (water) rec.waterMl = water;
+        history[key] = rec;
+      }
+      out.history = history;
+    }
+
+    if (data.foods instanceof Array) out.foods = cleanList(data.foods, cleanFood);
+
+    if (data.weights instanceof Array) {
+      out.weights = cleanList(data.weights, function (w) {
+        if (!w || !DATE_RE.test(w.date)) return null;
+        var kg = cleanNum(w.weight, 20, 400);
+        return kg === null ? null : { date: w.date, weight: round1(kg) };
+      });
+    }
+
+    if (data.measurements instanceof Array) {
+      out.measurements = cleanList(data.measurements, function (m) {
+        if (!m || !DATE_RE.test(m.date)) return null;
+        var row = { date: m.date }, any = false;
+        for (var i = 0; i < MEASUREMENT_FIELDS.length; i++) {
+          var v = cleanNum(m[MEASUREMENT_FIELDS[i]], 1, 500);
+          if (v !== null) { row[MEASUREMENT_FIELDS[i]] = v; any = true; }
+        }
+        return any ? row : null;
+      });
+    }
+
+    if (data.favorites instanceof Array) {
+      out.favorites = cleanList(data.favorites, function (f) {
+        if (!f) return null;
+        var name = cleanStr(f.name, 60);
+        var items = cleanList(f.items, cleanEntry);
+        return (name && items.length) ? { id: ID_RE.test(f.id) ? f.id : genId("fav"), name: name, items: items } : null;
+      });
+    }
+
+    if (data.usage && typeof data.usage === "object") {
+      var usage = {};
+      for (var u in data.usage) {
+        if (data.usage.hasOwnProperty(u) && ID_RE.test(u)) {
+          var c = cleanNum(data.usage[u], 0, 1000000);
+          if (c) usage[u] = Math.round(c);
+        }
+      }
+      out.usage = usage;
+    }
+
+    return out;
+  }
+
   function importAllData(file) {
+    if (file.size > 60 * 1024 * 1024) {
+      showBackupStatus("Fichier trop gros pour être une sauvegarde NaturaLift.", true);
+      return;
+    }
     var reader = new FileReader();
     reader.onload = function () {
       var data;
@@ -1246,6 +1466,11 @@
       }
       if (!data || data.app !== "NaturaLift") {
         showBackupStatus("Fichier invalide : ce n'est pas une sauvegarde NaturaLift.", true);
+        return;
+      }
+      data = sanitizeImport(data);
+      if (!data.profile && !data.history) {
+        showBackupStatus("Fichier invalide : aucune donnée exploitable dans cette sauvegarde.", true);
         return;
       }
       uiConfirm("Importer cette sauvegarde va remplacer toutes tes données actuelles sur cet appareil (profil, historique, aliments, poids). Continuer ?", "Importer", function () {
@@ -1312,7 +1537,12 @@
           kcal: round(kcal || 0),
           protein: round1(nutr["proteins_100g"] || 0),
           fat: round1(nutr["fat_100g"] || 0),
-          carbs: round1(nutr["carbohydrates_100g"] || 0)
+          carbs: round1(nutr["carbohydrates_100g"] || 0),
+          // Portion indiquée par le fabricant (ex : 30 g de céréales).
+          portion: (function () {
+            var q = parseNum(p.serving_quantity);
+            return (!isNaN(q) && q > 0 && q < 2000) ? { label: "portion", grams: round1(q) } : null;
+          })()
         });
       })
       .catch(function () {
@@ -1328,7 +1558,9 @@
         moment-là (inutile de la télécharger à chaque ouverture).
      --------------------------------------------------------- */
 
-  var SCANNER_LIB_URL = "https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js";
+  // Hébergée dans le dépôt : aucun site externe, et disponible hors-ligne
+  // une fois chargée une première fois.
+  var SCANNER_LIB_URL = "./html5-qrcode.min.js";
   var NATIVE_FORMATS = ["ean_13", "ean_8", "upc_a", "upc_e", "code_128"];
 
   var scannerState = { active: false, onResult: null, stream: null, timer: null, lib: null };
@@ -1461,7 +1693,7 @@
           showScannerError(cameraErrorMessage(err));
         });
     }, function () {
-      showScannerError("Scanner indisponible hors connexion sur ce téléphone. Vérifie ta connexion internet, ou passe en saisie « Manuel ».");
+      showScannerError("Scanner indisponible : le module de lecture n'a pas pu être chargé. Vérifie ta connexion internet, ou passe en saisie « Manuel ».");
     });
   }
 
@@ -1565,6 +1797,40 @@
     record.entries = record.entries.filter(function (e) { return e.id !== entryId; });
     saveHistory(history);
     return record;
+  }
+
+  // Valeurs d'une quantité donnée à partir des valeurs pour 100 g.
+  function macrosFor(per100, grams) {
+    var f = grams / 100;
+    return {
+      kcal: round(per100.kcal * f),
+      protein: round1(per100.protein * f),
+      fat: round1(per100.fat * f),
+      carbs: round1(per100.carbs * f)
+    };
+  }
+
+  function macrosLine(m) {
+    return round(m.kcal) + " kcal · P " + fmtNum(round1(m.protein)) + " · L " + fmtNum(round1(m.fat)) + " · G " + fmtNum(round1(m.carbs));
+  }
+
+  // "2 × œuf (100 g)" ou "150 g"
+  function entryQtyText(e) {
+    if (e.portionQty && e.portionLabel && e.grams) {
+      return fmtNum(round1(e.portionQty)) + " × " + e.portionLabel + " (" + fmtNum(round1(e.grams)) + " g)";
+    }
+    return e.grams ? fmtNum(round1(e.grams)) + " g" : "";
+  }
+
+  // Copie d'une entrée pour la rajouter ailleurs (favori, copie de la
+  // veille…). La photo n'est pas reprise : elle pèse lourd.
+  function copyEntryFields(src) {
+    var out = { name: src.name, kcal: src.kcal, protein: src.protein, fat: src.fat, carbs: src.carbs };
+    var extra = ["grams", "per100", "foodId", "barcode", "portionLabel", "portionQty", "portionGrams"];
+    for (var i = 0; i < extra.length; i++) {
+      if (src[extra[i]] !== undefined && src[extra[i]] !== null) out[extra[i]] = src[extra[i]];
+    }
+    return out;
   }
 
   function sumEntries(entries) {
@@ -1984,11 +2250,51 @@
   function setupFoodEntryUI(cfg) {
     var activeIndex = -1;
     var currentMatches = [];
+    var lastMatchId = null;
 
     function added(entry) {
-      showToast("Ajouté : " + entry.name + (entry.grams ? " (" + fmtNum(entry.grams) + " g)" : ""));
+      var qty = entryQtyText(entry);
+      showToast("Ajouté : " + entry.name + (qty ? " — " + qty : ""));
       cfg.onAdded();
     }
+
+    /* ---------- Unité : grammes ou portion ---------- */
+
+    function usingPortion(match) {
+      return !!(match && match.portion && cfg.unitPortion.checked);
+    }
+
+    // Quantité saisie convertie en grammes (NaN si invalide).
+    function gramsFromInput(match) {
+      var qty = parseNum(cfg.gramsInput.value);
+      if (isNaN(qty) || qty <= 0) return NaN;
+      return usingPortion(match) ? qty * match.portion.grams : qty;
+    }
+
+    function updateUnitUI(match) {
+      var portionMode = usingPortion(match);
+      cfg.gramsLabel.textContent = portionMode ? "Nombre de portions (" + match.portion.label + ")" : "Quantité (g)";
+      updateTotal(match);
+    }
+
+    function updateTotal(match) {
+      if (!match) { cfg.totalPreview.hidden = true; return; }
+      var grams = gramsFromInput(match);
+      if (isNaN(grams)) { cfg.totalPreview.hidden = true; return; }
+      cfg.totalPreview.textContent = "= " + (usingPortion(match) ? fmtNum(round1(grams)) + " g · " : "") + macrosLine(macrosFor(match, grams));
+      cfg.totalPreview.hidden = false;
+    }
+
+    function onUnitChange() {
+      var match = currentExactMatch();
+      if (!match) return;
+      cfg.gramsInput.value = usingPortion(match) ? "1" : "100";
+      updateUnitUI(match);
+    }
+
+    cfg.unitPortion.addEventListener("change", onUnitChange);
+    cfg.unitGrams.addEventListener("change", onUnitChange);
+    cfg.gramsInput.addEventListener("input", function () { updateTotal(currentExactMatch()); });
 
     /* ---------- Mode "Ma base" (recherche + autocomplétion) ---------- */
 
@@ -2002,8 +2308,27 @@
         cfg.previewEl.hidden = true;
         cfg.noMatchEl.hidden = cfg.searchInput.value.trim() === "" || !cfg.suggestionsEl.hidden;
         cfg.dbSubmitBtn.disabled = true;
+        cfg.unitRow.hidden = true;
+        cfg.totalPreview.hidden = true;
+        cfg.gramsLabel.textContent = "Quantité (g)";
+        if (lastMatchId !== null) { cfg.unitGrams.checked = true; cfg.gramsInput.value = "100"; }
+        lastMatchId = null;
         return;
       }
+      // Nouvel aliment choisi : par défaut en portion s'il en a une.
+      if (match.id !== lastMatchId) {
+        lastMatchId = match.id;
+        if (match.portion) {
+          cfg.unitPortionLabel.textContent = match.portion.label + " (" + fmtNum(match.portion.grams) + " g)";
+          cfg.unitPortion.checked = true;
+          cfg.gramsInput.value = "1";
+        } else {
+          cfg.unitGrams.checked = true;
+          cfg.gramsInput.value = "100";
+        }
+      }
+      cfg.unitRow.hidden = !match.portion;
+      updateUnitUI(match);
       cfg.noMatchEl.hidden = true;
       cfg.previewEl.hidden = false;
       cfg.previewEl.innerHTML =
@@ -2099,19 +2424,27 @@
       e.preventDefault();
       var match = currentExactMatch();
       if (!match) return;
-      var grams = parseNum(cfg.gramsInput.value);
-      if (isNaN(grams) || grams <= 0) { cfg.gramsInput.focus(); return; }
-      var factor = grams / 100;
+      var grams = gramsFromInput(match);
+      if (isNaN(grams)) { cfg.gramsInput.focus(); return; }
 
+      var m = macrosFor(match, grams);
       var entry = {
         name: match.name,
-        kcal: round(match.kcal * factor),
-        protein: round1(match.protein * factor),
-        fat: round1(match.fat * factor),
-        carbs: round1(match.carbs * factor),
-        grams: grams,
+        kcal: m.kcal,
+        protein: m.protein,
+        fat: m.fat,
+        carbs: m.carbs,
+        grams: round1(grams),
+        // Valeurs pour 100 g gardées : permettent de modifier la
+        // quantité plus tard sans dépendre de la base d'aliments.
+        per100: { kcal: match.kcal, protein: match.protein, fat: match.fat, carbs: match.carbs },
         foodId: match.id
       };
+      if (usingPortion(match)) {
+        entry.portionLabel = match.portion.label;
+        entry.portionQty = round1(parseNum(cfg.gramsInput.value));
+        entry.portionGrams = match.portion.grams;
+      }
 
       var dateKey = cfg.getDateKey();
       if (!dateKey) return;
@@ -2121,6 +2454,11 @@
 
       cfg.dbForm.reset();
       cfg.gramsInput.value = "100";
+      cfg.unitGrams.checked = true;
+      cfg.unitRow.hidden = true;
+      cfg.totalPreview.hidden = true;
+      cfg.gramsLabel.textContent = "Quantité (g)";
+      lastMatchId = null;
       cfg.previewEl.hidden = true;
       cfg.noMatchEl.hidden = true;
       cfg.dbSubmitBtn.disabled = true;
@@ -2162,6 +2500,11 @@
     /* ---------- Mode "Scanner" ---------- */
 
     var scan = cfg.scan;
+    var scanPortion = null;
+
+    scan.portionBtn.addEventListener("click", function () {
+      if (scanPortion) scan.gramsInput.value = fmtNum(scanPortion.grams);
+    });
 
     function resetScanPanel() {
       scan.statusEl.hidden = true;
@@ -2175,7 +2518,12 @@
       scan.proteinInput.value = fmtNum(data.protein);
       scan.fatInput.value = fmtNum(data.fat);
       scan.carbsInput.value = fmtNum(data.carbs);
-      scan.gramsInput.value = "100";
+      // Portion du fabricant ou de ta base : proposée en un tap, et
+      // utilisée comme quantité par défaut (c'est souvent ce qu'on mange).
+      scanPortion = data.portion || null;
+      scan.gramsInput.value = scanPortion ? fmtNum(scanPortion.grams) : "100";
+      scan.portionBtn.hidden = !scanPortion;
+      if (scanPortion) scan.portionBtn.textContent = "1 " + scanPortion.label + " = " + fmtNum(scanPortion.grams) + " g";
       scan.form.setAttribute("data-barcode", barcode);
       scan.barcodeLabelEl.textContent = barcode;
       scan.sourceChipEl.textContent = sourceLabel;
@@ -2258,8 +2606,6 @@
       e.preventDefault();
       var grams = parseNum(scan.gramsInput.value);
       if (isNaN(grams) || grams <= 0) { scan.gramsInput.focus(); return; }
-      var factor = grams / 100;
-
       var name = scan.nameInput.value.trim();
       if (!name) { scan.nameInput.focus(); return; }
       var per100 = {
@@ -2270,13 +2616,15 @@
       };
       var barcodeVal = scan.form.getAttribute("data-barcode") || null;
 
+      var m = macrosFor(per100, grams);
       var entry = {
         name: name,
-        kcal: round(per100.kcal * factor),
-        protein: round1(per100.protein * factor),
-        fat: round1(per100.fat * factor),
-        carbs: round1(per100.carbs * factor),
-        grams: grams,
+        kcal: m.kcal,
+        protein: m.protein,
+        fat: m.fat,
+        carbs: m.carbs,
+        grams: round1(grams),
+        per100: per100,
         barcode: barcodeVal
       };
 
@@ -2288,7 +2636,7 @@
         var foods = loadFoods();
         var existing = findFoodByName(foods, name);
         if (!existing) {
-          createFood({ name: name, kcal: per100.kcal, protein: per100.protein, fat: per100.fat, carbs: per100.carbs, barcode: barcodeVal });
+          createFood({ name: name, kcal: per100.kcal, protein: per100.protein, fat: per100.fat, carbs: per100.carbs, barcode: barcodeVal, portion: scanPortion });
         } else if (barcodeVal && !existing.barcode) {
           // Aliment déjà présent par nom mais pas encore lié à ce code-barres.
           updateFoodRecord(existing.id, { name: existing.name, kcal: existing.kcal, protein: existing.protein, fat: existing.fat, carbs: existing.carbs, barcode: barcodeVal });
@@ -2343,7 +2691,7 @@
     return formatDateLong(key);
   }
 
-  function renderFoodListInto(listEl, emptyEl, entries, onDelete) {
+  function renderFoodListInto(listEl, emptyEl, entries, onOpen, onDelete) {
     if (entries.length === 0) {
       listEl.innerHTML = "";
       emptyEl.hidden = false;
@@ -2354,25 +2702,175 @@
     var html = "";
     for (var i = entries.length - 1; i >= 0; i--) {
       var e = entries[i];
-      var qtyLabel = e.grams ? (fmtNum(e.grams) + ' g · ') : '';
-      var thumb = e.photo ? '<img class="food-thumb" src="' + e.photo + '" alt="">' : '';
+      var qty = entryQtyText(e);
+      var photo = safePhoto(e.photo);
+      var thumb = photo ? '<img class="food-thumb" src="' + photo + '" alt="">' : '';
+      var id = escapeHtml(e.id);
       html +=
-        '<li class="food-item">' + thumb +
-          '<span class="food-name">' + escapeHtml(e.name) +
-            '<span class="food-macros">' + qtyLabel + 'P ' + fmtNum(e.protein) + ' · L ' + fmtNum(e.fat) + ' · G ' + fmtNum(e.carbs) + '</span>' +
-          '</span>' +
-          '<span class="food-kcal">' + e.kcal + '<small> kcal</small></span>' +
-          '<button type="button" class="food-del" data-id="' + e.id + '" aria-label="Supprimer ' + escapeHtml(e.name) + '">×</button>' +
+        '<li class="food-item">' +
+          '<button type="button" class="food-open" data-id="' + id + '" aria-label="Modifier ' + escapeHtml(e.name) + '">' + thumb +
+            '<span class="food-name">' + escapeHtml(e.name) +
+              '<span class="food-macros">' + (qty ? escapeHtml(qty) + ' · ' : '') + 'P ' + fmtNum(round1(e.protein)) + ' · L ' + fmtNum(round1(e.fat)) + ' · G ' + fmtNum(round1(e.carbs)) + '</span>' +
+            '</span>' +
+            '<span class="food-kcal">' + round(e.kcal) + '<small> kcal</small></span>' +
+          '</button>' +
+          '<button type="button" class="food-del" data-id="' + id + '" aria-label="Supprimer ' + escapeHtml(e.name) + '">×</button>' +
         '</li>';
     }
     listEl.innerHTML = html;
 
+    var openButtons = listEl.querySelectorAll(".food-open");
+    for (var k = 0; k < openButtons.length; k++) {
+      openButtons[k].addEventListener("click", function (ev) {
+        onOpen(ev.currentTarget.getAttribute("data-id"));
+      });
+    }
     var delButtons = listEl.querySelectorAll(".food-del");
     for (var j = 0; j < delButtons.length; j++) {
       delButtons[j].addEventListener("click", function (ev) {
         onDelete(ev.currentTarget.getAttribute("data-id"));
       });
     }
+  }
+
+  /* ---------------------------------------------------------
+     Modifier une entrée du journal (quantité ou valeurs)
+     --------------------------------------------------------- */
+
+  var entryEdit = { dateKey: null, id: null, per100: null, portion: null };
+
+  function findEntry(dateKey, id) {
+    var r = getDayRecord(dateKey);
+    if (!r) return null;
+    for (var i = 0; i < r.entries.length; i++) if (r.entries[i].id === id) return r.entries[i];
+    return null;
+  }
+
+  function entryPortionMode() {
+    return !!(entryEdit.portion && $("entryUnitPortion").checked);
+  }
+
+  function entryGramsFromInput() {
+    var qty = parseNum($("entryQty").value);
+    if (isNaN(qty) || qty <= 0) return NaN;
+    return entryPortionMode() ? qty * entryEdit.portion.grams : qty;
+  }
+
+  function updateEntryPreview() {
+    $("entryQtyLabel").textContent = entryPortionMode() ? "Nombre de portions (" + entryEdit.portion.label + ")" : "Quantité (g)";
+    var grams = entryGramsFromInput();
+    $("entryPreview").textContent = isNaN(grams) ? "" :
+      "= " + (entryPortionMode() ? fmtNum(round1(grams)) + " g · " : "") + macrosLine(macrosFor(entryEdit.per100, grams));
+  }
+
+  function openEntryEditor(dateKey, id) {
+    var e = findEntry(dateKey, id);
+    if (!e) return;
+    entryEdit.dateKey = dateKey;
+    entryEdit.id = id;
+    // Valeurs pour 100 g : enregistrées avec l'entrée, ou retrouvées à
+    // partir de la quantité pour les entrées d'avant cette version.
+    entryEdit.per100 = e.per100 || (e.grams > 0 ? {
+      kcal: e.kcal * 100 / e.grams, protein: e.protein * 100 / e.grams,
+      fat: e.fat * 100 / e.grams, carbs: e.carbs * 100 / e.grams
+    } : null);
+    var food = e.foodId ? findFoodById(loadFoods(), e.foodId) : null;
+    entryEdit.portion = e.portionGrams ? { label: e.portionLabel, grams: e.portionGrams } : (food && food.portion ? food.portion : null);
+
+    $("entryName").value = e.name;
+    $("entryError").hidden = true;
+    $("entryQtyBlock").hidden = !entryEdit.per100;
+    $("entryMacroBlock").hidden = !!entryEdit.per100;
+
+    if (entryEdit.per100) {
+      $("entryUnitRow").hidden = !entryEdit.portion;
+      if (entryEdit.portion) $("entryUnitPortionLabel").textContent = entryEdit.portion.label + " (" + fmtNum(entryEdit.portion.grams) + " g)";
+      if (entryEdit.portion && e.portionQty) {
+        $("entryUnitPortion").checked = true;
+        $("entryQty").value = fmtNum(round1(e.portionQty));
+      } else {
+        $("entryUnitGrams").checked = true;
+        $("entryQty").value = fmtNum(round1(e.grams));
+      }
+      updateEntryPreview();
+    } else {
+      $("entryKcal").value = fmtNum(round(e.kcal));
+      $("entryProtein").value = fmtNum(round1(e.protein));
+      $("entryFat").value = fmtNum(round1(e.fat));
+      $("entryCarbs").value = fmtNum(round1(e.carbs));
+    }
+
+    $("entrySheet").hidden = false;
+    document.body.classList.add("no-scroll");
+  }
+
+  function closeEntryEditor() {
+    $("entrySheet").hidden = true;
+    document.body.classList.remove("no-scroll");
+  }
+
+  function onEntryUnitChange() {
+    // Garde la même quantité réelle en changeant d'unité.
+    var wasPortion = !entryPortionMode();
+    var qty = parseNum($("entryQty").value);
+    if (!isNaN(qty) && entryEdit.portion) {
+      $("entryQty").value = fmtNum(round1(wasPortion ? qty * entryEdit.portion.grams : qty / entryEdit.portion.grams));
+    }
+    updateEntryPreview();
+  }
+
+  function handleEntrySave(ev) {
+    ev.preventDefault();
+    var err = $("entryError");
+    var name = $("entryName").value.trim();
+    if (!name) { err.textContent = "Le nom ne peut pas être vide."; err.hidden = false; return; }
+
+    var key = entryEdit.dateKey, id = entryEdit.id;
+    var updated;
+    if (entryEdit.per100) {
+      var grams = entryGramsFromInput();
+      if (isNaN(grams)) { err.textContent = "Quantité invalide (ex : 150 ou 1,5)."; err.hidden = false; return; }
+      var m = macrosFor(entryEdit.per100, grams);
+      updated = { name: name, kcal: m.kcal, protein: m.protein, fat: m.fat, carbs: m.carbs, grams: round1(grams), per100: entryEdit.per100 };
+      if (entryPortionMode()) {
+        updated.portionLabel = entryEdit.portion.label;
+        updated.portionQty = round1(parseNum($("entryQty").value));
+        updated.portionGrams = entryEdit.portion.grams;
+      }
+    } else {
+      var kcal = parseNum($("entryKcal").value);
+      if (isNaN(kcal) || kcal < 0) { err.textContent = "Calories invalides."; err.hidden = false; return; }
+      updated = {
+        name: name, kcal: round(kcal),
+        protein: round1(parseNum($("entryProtein").value) || 0),
+        fat: round1(parseNum($("entryFat").value) || 0),
+        carbs: round1(parseNum($("entryCarbs").value) || 0)
+      };
+    }
+
+    closeEntryEditor();
+    withUndo([STORAGE_HISTORY], "Aliment modifié", function () {
+      var history = loadHistory();
+      var r = history[key];
+      if (!r) return;
+      for (var i = 0; i < r.entries.length; i++) {
+        var old = r.entries[i];
+        if (old.id !== id) continue;
+        // On garde l'identité de l'entrée (photo, lien vers la base…).
+        updated.id = old.id;
+        if (old.photo) updated.photo = old.photo;
+        if (old.foodId) updated.foodId = old.foodId;
+        if (old.barcode) updated.barcode = old.barcode;
+        r.entries[i] = updated;
+      }
+      saveHistory(history);
+    }, refreshTracker);
+  }
+
+  function handleEntryDelete() {
+    var key = entryEdit.dateKey, id = entryEdit.id;
+    closeEntryEditor();
+    withUndo([STORAGE_HISTORY], "Aliment supprimé", function () { removeFoodFromDay(key, id); }, refreshTracker);
   }
 
   // Jour précédent qui a un journal (pour "Copier la veille").
@@ -2407,6 +2905,8 @@
 
     $("gaugesGrid").innerHTML = gaugesHtml(totals, effectiveTargetsFor(view), false);
     renderFoodListInto($("foodLog"), $("logEmpty"), view.entries, function (id) {
+      openEntryEditor(key, id);
+    }, function (id) {
       withUndo([STORAGE_HISTORY], "Aliment supprimé", function () { removeFoodFromDay(key, id); }, refreshTracker);
     });
 
@@ -2449,7 +2949,7 @@
       for (var i = 0; i < prev.entries.length; i++) {
         var src = prev.entries[i];
         // Photos non copiées : elles pèsent lourd dans le stockage.
-        addFoodToDay(key, { name: src.name, kcal: src.kcal, protein: src.protein, fat: src.fat, carbs: src.carbs, grams: src.grams || null, foodId: src.foodId || null });
+        addFoodToDay(key, copyEntryFields(src));
       }
     }, refreshTracker);
   }
@@ -2501,7 +3001,7 @@
 
       html +=
         '<li>' +
-          '<button type="button" class="history-row" data-date="' + record.date + '">' +
+          '<button type="button" class="history-row" data-date="' + escapeHtml(record.date) + '">' +
             '<span class="status-dot st-' + status + '"></span>' +
             '<span class="h-date">' + dayLabel(record.date) +
               '<span class="h-sub">' + record.entries.length + ' aliment' + (record.entries.length > 1 ? 's' : '') +
@@ -2679,7 +3179,7 @@
     var html = "";
     for (var i = 0; i < foods.length; i++) {
       var f = foods[i];
-      var barcodeTag = f.barcode ? ' · 📷' : '';
+      var barcodeTag = (f.portion ? ' · 1 ' + escapeHtml(f.portion.label) + ' = ' + fmtNum(f.portion.grams) + ' g' : '') + (f.barcode ? ' · 📷' : '');
       html +=
         '<li class="food-db-row">' +
           '<div class="fdb-info">' +
@@ -2687,8 +3187,8 @@
             '<span class="fdb-macros">' + f.kcal + ' kcal · P' + fmtNum(f.protein) + ' L' + fmtNum(f.fat) + ' G' + fmtNum(f.carbs) + ' /100g' + barcodeTag + '</span>' +
           '</div>' +
           '<div class="fdb-actions">' +
-            '<button type="button" class="icon-btn" data-edit="' + f.id + '" aria-label="Modifier ' + escapeHtml(f.name) + '">✎</button>' +
-            '<button type="button" class="icon-btn icon-danger" data-delete="' + f.id + '" aria-label="Supprimer ' + escapeHtml(f.name) + '">×</button>' +
+            '<button type="button" class="icon-btn" data-edit="' + escapeHtml(f.id) + '" aria-label="Modifier ' + escapeHtml(f.name) + '">✎</button>' +
+            '<button type="button" class="icon-btn icon-danger" data-delete="' + escapeHtml(f.id) + '" aria-label="Supprimer ' + escapeHtml(f.name) + '">×</button>' +
           '</div>' +
         '</li>';
     }
@@ -2722,11 +3222,14 @@
       $("editFoodProtein").value = fmtNum(food.protein);
       $("editFoodFat").value = fmtNum(food.fat);
       $("editFoodCarbs").value = fmtNum(food.carbs);
+      $("editFoodPortionLabel").value = food.portion ? food.portion.label : "";
+      $("editFoodPortionGrams").value = food.portion ? fmtNum(food.portion.grams) : "";
     } else {
       foodsEditState.editingId = null;
       $("foodEditTitle").textContent = "Nouvel aliment";
       form.reset();
     }
+    $("foodEditError").hidden = true;
     form.hidden = false;
     form.scrollIntoView({ behavior: "smooth", block: "start" });
   }
@@ -2747,6 +3250,24 @@
       carbs: round1(parseNum($("editFoodCarbs").value) || 0)
     };
     if (!data.name) return;
+
+    // Portion facultative : les deux champs, ou aucun.
+    var pLabel = $("editFoodPortionLabel").value.trim();
+    var pGramsRaw = $("editFoodPortionGrams").value.trim();
+    var pGrams = parseNum(pGramsRaw);
+    var err = $("foodEditError");
+    if ((pLabel && !pGramsRaw) || (!pLabel && pGramsRaw)) {
+      err.textContent = "Pour une portion, remplis son nom ET son poids (ou laisse les deux vides).";
+      err.hidden = false;
+      return;
+    }
+    if (pLabel && (isNaN(pGrams) || pGrams <= 0 || pGrams > 5000)) {
+      err.textContent = "Poids de portion invalide (ex : 50).";
+      err.hidden = false;
+      return;
+    }
+    err.hidden = true;
+    data.portion = pLabel ? { label: pLabel.slice(0, 30), grams: round1(pGrams) } : null;
 
     var wasEditing = !!foodsEditState.editingId;
     if (wasEditing) updateFoodRecord(foodsEditState.editingId, data);
@@ -2809,6 +3330,7 @@
   function init() {
     migrateLegacyLog();
     loadFoods();
+    seedDefaultPortions();
     setupDialog();
     setupToast();
 
@@ -2837,6 +3359,12 @@
       noMatchEl: $("foodNoMatch"),
       previewEl: $("foodPreview"),
       gramsInput: $("foodGrams"),
+      gramsLabel: $("foodGramsLabel"),
+      unitRow: $("unitRow"),
+      unitPortion: $("unitPortion"),
+      unitGrams: $("unitGrams"),
+      unitPortionLabel: $("unitPortionLabel"),
+      totalPreview: $("foodTotalPreview"),
       dbSubmitBtn: $("dbAddSubmit"),
       manualFields: { name: $("foodName"), kcal: $("foodKcal"), protein: $("foodProtein"), fat: $("foodFat"), carbs: $("foodCarbs") },
       photoCtrl: photoCtrl,
@@ -2856,6 +3384,7 @@
         fatInput: $("scanFat"),
         carbsInput: $("scanCarbs"),
         gramsInput: $("scanGrams"),
+        portionBtn: $("scanPortionBtn"),
         saveToDbCheckbox: $("scanSaveToDb"),
         incompleteEl: $("scanIncomplete"),
         barcodeLabelEl: $("scanBarcodeLabel"),
@@ -2890,6 +3419,16 @@
     });
 
     $("saveAsFavorite").addEventListener("click", handleSaveAsFavorite);
+
+    $("entrySheetForm").addEventListener("submit", handleEntrySave);
+    $("entryCancel").addEventListener("click", closeEntryEditor);
+    $("entryDelete").addEventListener("click", handleEntryDelete);
+    $("entryUnitPortion").addEventListener("change", onEntryUnitChange);
+    $("entryUnitGrams").addEventListener("change", onEntryUnitChange);
+    $("entryQty").addEventListener("input", updateEntryPreview);
+    $("entrySheet").addEventListener("click", function (e) {
+      if (e.target === $("entrySheet")) closeEntryEditor();
+    });
     $("measurementsForm").addEventListener("submit", handleMeasurementsSubmit);
 
     // Historique : Liste / Calendrier / Bilans

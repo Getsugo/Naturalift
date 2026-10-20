@@ -109,10 +109,17 @@
             <div id="foodPreview" class="food-preview" hidden>
               <!-- injecté par app.js -->
             </div>
+            <div id="unitRow" class="segmented unit-toggle" role="radiogroup" aria-label="Unité" hidden>
+              <input type="radio" id="unitPortion" name="addUnit" value="portion">
+              <label for="unitPortion" id="unitPortionLabel" class="seg-btn">Portion</label>
+              <input type="radio" id="unitGrams" name="addUnit" value="g" checked>
+              <label for="unitGrams" class="seg-btn">Grammes</label>
+            </div>
             <div class="field">
-              <label for="foodGrams">Quantité (g)</label>
+              <label for="foodGrams" id="foodGramsLabel">Quantité (g)</label>
               <input type="text" id="foodGrams" value="100" inputmode="decimal" autocomplete="off">
             </div>
+            <p id="foodTotalPreview" class="total-preview" hidden></p>
             <button type="submit" class="btn-primary" id="dbAddSubmit" disabled>Ajouter au journal</button>
           </form>
 
@@ -143,6 +150,7 @@
                 <label for="scanGrams">Quantité consommée (g)</label>
                 <input type="text" id="scanGrams" value="100" inputmode="decimal" autocomplete="off">
               </div>
+              <button type="button" id="scanPortionBtn" class="chip-btn" hidden></button>
               <label class="checkbox-row">
                 <input type="checkbox" id="scanSaveToDb" checked>
                 Enregistrer ce produit dans ma base (reconnu instantanément au prochain scan)
@@ -430,7 +438,16 @@
             <label for="editFoodCarbs">Glucides /100g</label>
             <input type="text" id="editFoodCarbs" inputmode="decimal" autocomplete="off" required>
           </div>
+          <div class="field">
+            <label for="editFoodPortionLabel">Portion (facultatif)</label>
+            <input type="text" id="editFoodPortionLabel" placeholder="Ex : œuf, pot, tranche" maxlength="30" autocomplete="off">
+          </div>
+          <div class="field">
+            <label for="editFoodPortionGrams">Poids d'une portion (g)</label>
+            <input type="text" id="editFoodPortionGrams" inputmode="decimal" placeholder="Ex : 50" autocomplete="off">
+          </div>
         </div>
+        <p id="foodEditError" class="note note-error" hidden></p>
         <div class="edit-form-actions">
           <button type="submit" class="btn-primary">Enregistrer</button>
           <button type="button" id="cancelFoodEdit" class="btn-ghost">Annuler</button>
@@ -615,6 +632,59 @@
     <p id="scannerHint" class="scanner-hint">Cadre le code-barres du produit dans la zone ci-dessus.</p>
     <p id="scannerError" class="note scanner-error-note" hidden></p>
   </div>
+</div>
+
+<!-- ===================== MODIFIER UNE ENTRÉE DU JOURNAL ===================== -->
+<div id="entrySheet" class="ui-dialog" hidden>
+  <form id="entrySheetForm" class="ui-dialog-box entry-sheet" role="dialog" aria-modal="true" aria-labelledby="entrySheetTitle">
+    <p id="entrySheetTitle" class="entry-sheet-title">Modifier l'aliment</p>
+
+    <div class="field field-wide">
+      <label for="entryName">Nom</label>
+      <input type="text" id="entryName" maxlength="120" autocomplete="off" required>
+    </div>
+
+    <div id="entryQtyBlock">
+      <div id="entryUnitRow" class="segmented unit-toggle" role="radiogroup" aria-label="Unité" hidden>
+        <input type="radio" id="entryUnitPortion" name="entryUnit" value="portion">
+        <label for="entryUnitPortion" id="entryUnitPortionLabel" class="seg-btn">Portion</label>
+        <input type="radio" id="entryUnitGrams" name="entryUnit" value="g" checked>
+        <label for="entryUnitGrams" class="seg-btn">Grammes</label>
+      </div>
+      <div class="field">
+        <label for="entryQty" id="entryQtyLabel">Quantité (g)</label>
+        <input type="text" id="entryQty" inputmode="decimal" autocomplete="off">
+      </div>
+      <p id="entryPreview" class="total-preview"></p>
+    </div>
+
+    <div id="entryMacroBlock" class="field-grid">
+      <div class="field">
+        <label for="entryKcal">Calories</label>
+        <input type="text" id="entryKcal" inputmode="decimal" autocomplete="off">
+      </div>
+      <div class="field">
+        <label for="entryProtein">Protéines (g)</label>
+        <input type="text" id="entryProtein" inputmode="decimal" autocomplete="off">
+      </div>
+      <div class="field">
+        <label for="entryFat">Lipides (g)</label>
+        <input type="text" id="entryFat" inputmode="decimal" autocomplete="off">
+      </div>
+      <div class="field">
+        <label for="entryCarbs">Glucides (g)</label>
+        <input type="text" id="entryCarbs" inputmode="decimal" autocomplete="off">
+      </div>
+    </div>
+
+    <p id="entryError" class="note note-error" hidden></p>
+
+    <div class="ui-dialog-actions entry-actions">
+      <button type="button" id="entryCancel" class="btn-secondary">Annuler</button>
+      <button type="submit" class="btn-primary">Enregistrer</button>
+    </div>
+    <button type="button" id="entryDelete" class="btn-ghost entry-delete">Supprimer du journal</button>
+  </form>
 </div>
 
 <!-- ===================== DIALOGUE (remplace alert / confirm / prompt) ===================== -->

@@ -1995,3 +1995,87 @@ body.no-scroll{ overflow: hidden; }
 @media (prefers-reduced-motion: reduce){
   .ui-dialog-box, .ui-toast{ animation: none; }
 }
+
+/* =========================================================
+   v14 — Journal : ligne touchable pour modifier
+   ========================================================= */
+
+.food-item{ padding: 4px 4px 4px 12px; }
+
+.food-open{
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: none;
+  border: none;
+  color: inherit;
+  text-align: left;
+  padding: 6px 0;
+  min-height: 48px;
+  cursor: pointer;
+  font: inherit;
+}
+
+.food-open .food-name{ min-width: 0; overflow-wrap: anywhere; }
+
+/* =========================================================
+   Portions et aperçu du total
+   ========================================================= */
+
+.unit-toggle{ margin-bottom: 12px; }
+.unit-toggle .seg-btn{ font-size: 13px; padding: 10px 6px; }
+
+.total-preview{
+  margin: -6px 0 14px;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  color: var(--lime);
+}
+
+.chip-btn{
+  display: inline-block;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 8px 14px;
+  min-height: 40px;
+  font-size: 13px;
+  font-weight: 700;
+  margin: -4px 0 14px;
+  cursor: pointer;
+}
+
+/* =========================================================
+   Feuille "Modifier l'aliment"
+   ========================================================= */
+
+.entry-sheet{
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+}
+
+.entry-sheet-title{
+  margin: 0 0 16px;
+  font-size: 15px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.entry-sheet .field{ margin-bottom: 14px; }
+.entry-sheet .field-grid{ margin-bottom: 14px; }
+.entry-sheet .field-grid .field{ margin-bottom: 0; }
+.entry-sheet .note-error{ margin: 0 0 14px; }
+
+.entry-delete{
+  display: block;
+  width: 100%;
+  margin-top: 12px;
+  color: var(--red);
+  border-color: transparent;
+  min-height: 44px;
+}
