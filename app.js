@@ -18,10 +18,13 @@
   var STORAGE_MEASUREMENTS = "nl_measurements_v1"; // [ { date, waist?, chest?, hips?, arm?, thigh? } ]
   var STORAGE_FAVORITES = "nl_favorites_v1";       // [ { id, name, items: [...] } ]
   var STORAGE_USAGE = "nl_food_usage_v1";          // { foodId: count }
+  var STORAGE_LAST_BACKUP = "nl_last_backup_v1"; // date du dernier export
   var STORAGE_LOG_LEGACY = "nl_log_v1";    // ancienne version (migration)
   var MAX_HISTORY_DAYS = 400;              // ~13 mois, borne la taille du localStorage
   var MAX_SUGGESTIONS = 8;
-  var OFF_API_BASE = "https://world.openfoodfacts.org/api/v0/product/";
+  // API v2 + liste de champs : réponse quelques Ko au lieu de ~100 Ko.
+  var OFF_API_BASE = "https://world.openfoodfacts.org/api/v2/product/";
+  var OFF_FIELDS = "product_name,product_name_fr,generic_name,generic_name_fr,brands,nutriments";
 
   /* ---------------------------------------------------------
      Constantes métier
@@ -145,7 +148,7 @@
       var now = Date.now();
       if (now - lastStorageAlert > 3000) {
         lastStorageAlert = now;
-        window.alert("Stockage de l'appareil plein : la dernière modification n'a PAS été enregistrée.\n\nExporte une sauvegarde (Aliments > Sauvegarde), puis supprime des photos de repas ou d'anciennes journées.");
+        uiAlert("Stockage de l'appareil plein : la dernière modification n'a PAS été enregistrée.\n\nExporte une sauvegarde (Aliments › Sauvegarde), puis supprime des photos de repas ou d'anciennes journées.");
       }
       return false;
     }
@@ -180,6 +183,127 @@
     return prefix + "-" + Date.now() + "-" + Math.floor(Math.random() * 1000);
   }
 
+  // Lit un nombre saisi au clavier français : "78,4" comme "78.4".
+  // Renvoie NaN si le champ est vide ou invalide.
+  function parseNum(value) {
+    var s = String(value === undefined || value === null ? "" : value).replace(/\s/g, "").replace(",", ".");
+    if (s === "" || !/^-?\d*\.?\d+$|^-?\d+\.$/.test(s)) return NaN;
+    return parseFloat(s);
+  }
+
+  // Affiche un nombre à la française (virgule décimale).
+  function fmtNum(n) { return String(n).replace(".", ","); }
+
+  /* ---------------------------------------------------------
+     Interface : dialogue (remplace alert / confirm / prompt,
+     qui sont laids et cassent l'effet "appli" une fois installée)
+     et toast avec bouton Annuler.
+     --------------------------------------------------------- */
+
+  var dialogState = { onOk: null, onCancel: null };
+
+  function openDialog(opts) {
+    dialogState.onOk = opts.onOk || null;
+    dialogState.onCancel = opts.onCancel || null;
+    $("uiDialogMsg").textContent = opts.message;
+    var input = $("uiDialogInput");
+    input.hidden = !opts.input;
+    input.value = opts.input && opts.input.value ? opts.input.value : "";
+    input.placeholder = opts.input && opts.input.placeholder ? opts.input.placeholder : "";
+    var ok = $("uiDialogOk");
+    ok.textContent = opts.okLabel || "OK";
+    ok.className = opts.danger ? "btn-primary btn-danger" : "btn-primary";
+    $("uiDialogCancel").hidden = opts.cancelLabel === null;
+    $("uiDialogCancel").textContent = opts.cancelLabel || "Annuler";
+    $("uiDialogBox").classList.toggle("single-action", opts.cancelLabel === null);
+    $("uiDialog").hidden = false;
+    window.setTimeout(function () { (opts.input ? input : ok).focus(); }, 30);
+  }
+
+  function closeDialog() { $("uiDialog").hidden = true; }
+
+  function setupDialog() {
+    $("uiDialogBox").addEventListener("submit", function (e) {
+      e.preventDefault();
+      var cb = dialogState.onOk;
+      var value = $("uiDialogInput").value;
+      closeDialog();
+      if (cb) cb(value);
+    });
+    $("uiDialogCancel").addEventListener("click", function () {
+      var cb = dialogState.onCancel;
+      closeDialog();
+      if (cb) cb();
+    });
+    $("uiDialog").addEventListener("click", function (e) {
+      if (e.target === $("uiDialog")) $("uiDialogCancel").click();
+    });
+  }
+
+  function uiAlert(message, onOk) {
+    openDialog({ message: message, okLabel: "OK", cancelLabel: null, onOk: onOk });
+  }
+
+  function uiConfirm(message, okLabel, onOk, danger) {
+    openDialog({ message: message, okLabel: okLabel, onOk: onOk, danger: danger });
+  }
+
+  function uiPrompt(message, placeholder, onOk) {
+    openDialog({
+      message: message,
+      okLabel: "Enregistrer",
+      input: { placeholder: placeholder },
+      onOk: function (value) { if (value && value.trim()) onOk(value.trim()); }
+    });
+  }
+
+  var toastState = { timer: null, undo: null };
+
+  function hideToast() {
+    $("uiToast").hidden = true;
+    toastState.undo = null;
+    if (toastState.timer) { window.clearTimeout(toastState.timer); toastState.timer = null; }
+  }
+
+  function showToast(message, undoFn) {
+    hideToast();
+    $("uiToastMsg").textContent = message;
+    $("uiToastUndo").hidden = !undoFn;
+    toastState.undo = undoFn || null;
+    $("uiToast").hidden = false;
+    toastState.timer = window.setTimeout(hideToast, undoFn ? 6000 : 2500);
+  }
+
+  function setupToast() {
+    $("uiToastUndo").addEventListener("click", function () {
+      var fn = toastState.undo;
+      hideToast();
+      if (fn) fn();
+    });
+  }
+
+  // Exécute une action destructrice SANS demander confirmation, mais
+  // garde une copie des clés de stockage concernées pour pouvoir tout
+  // remettre en un tap ("Annuler" dans le toast). Plus rapide qu'une
+  // confirmation, et plus sûr : une erreur se rattrape.
+  function withUndo(keys, message, action, refresh) {
+    var snapshot = {};
+    for (var i = 0; i < keys.length; i++) {
+      try { snapshot[keys[i]] = localStorage.getItem(keys[i]); } catch (e) { snapshot[keys[i]] = null; }
+    }
+    action();
+    refresh();
+    showToast(message, function () {
+      for (var j = 0; j < keys.length; j++) {
+        try {
+          if (snapshot[keys[j]] === null) localStorage.removeItem(keys[j]);
+          else localStorage.setItem(keys[j], snapshot[keys[j]]);
+        } catch (e) { /* noop */ }
+      }
+      refresh();
+    });
+  }
+
   /* ---------------------------------------------------------
      Calcul du métabolisme et des macros (Mifflin-St Jeor)
      --------------------------------------------------------- */
@@ -199,7 +323,10 @@
       bmr = 10 * weight + 6.25 * height - 5 * age - 161;
     }
 
-    var tdee = bmr * activity;
+    // Dépense : la formule par défaut, ou la dépense réelle mesurée à
+    // partir du journal et des pesées si l'utilisateur l'a adoptée.
+    var tdeeFormula = bmr * activity;
+    var tdee = profile.tdeeOverride ? profile.tdeeOverride : tdeeFormula;
     var config = OBJECTIVE_CONFIG[objective];
     var targetKcal = tdee * (1 + config.kcalAdjust[sex]);
 
@@ -215,6 +342,9 @@
     return {
       bmr: round(bmr),
       tdee: round(tdee),
+      tdeeFormula: round(tdeeFormula),
+      tdeeSource: profile.tdeeOverride ? "real" : "formula",
+      kcalAdjustPct: round(config.kcalAdjust[sex] * 100),
       kcal: round(targetKcal),
       protein: round(proteinG),
       fat: round(fatG),
@@ -391,13 +521,13 @@
 
   function renderWeightStats(stats) {
     function cell(label, value) {
-      var display = value === null ? "—" : (value > 0 ? "+" : "") + value + " kg";
+      var display = value === null ? "—" : (value > 0 ? "+" : "") + fmtNum(value) + " kg";
       var cls = "ws-value";
       if (value !== null) cls += value < -0.05 ? " ws-down" : (value > 0.05 ? " ws-up" : " ws-flat");
       return '<div class="weight-stat-cell"><span class="ws-label">' + label + '</span><span class="' + cls + '">' + display + '</span></div>';
     }
     var html =
-      '<div class="weight-stat-cell"><span class="ws-label">Actuel</span><span class="ws-value">' + stats.current + ' kg</span></div>' +
+      '<div class="weight-stat-cell"><span class="ws-label">Actuel</span><span class="ws-value">' + fmtNum(stats.current) + ' kg</span></div>' +
       cell("7 jours", stats.change7) +
       cell("30 jours", stats.change30);
     $("weightStatsGrid").innerHTML = html;
@@ -574,8 +704,8 @@
     if (!profile || !avg) return;
     profile.weight = avg;
     applyProfile(profile);
-    loadExistingProfile();
     refreshWeightPanel();
+    showToast("Cibles mises à jour pour " + fmtNum(avg) + " kg");
   }
 
   function renderWeightList(weights) {
@@ -590,7 +720,7 @@
       html +=
         '<li class="weight-row">' +
           '<span class="wr-date">' + label + '</span>' +
-          '<span class="wr-value">' + w.weight + ' kg</span>' +
+          '<span class="wr-value">' + fmtNum(w.weight) + ' kg</span>' +
           '<button type="button" class="wr-del" data-date="' + w.date + '" aria-label="Supprimer">×</button>' +
         '</li>';
     }
@@ -599,21 +729,19 @@
     var delButtons = $("weightList").querySelectorAll(".wr-del");
     for (var j = 0; j < delButtons.length; j++) {
       delButtons[j].addEventListener("click", function (ev) {
-        deleteWeight(ev.currentTarget.getAttribute("data-date"));
-        refreshWeightPanel();
+        var date = ev.currentTarget.getAttribute("data-date");
+        withUndo([STORAGE_WEIGHTS], "Pesée supprimée", function () { deleteWeight(date); }, refreshWeightPanel);
       });
     }
   }
 
   function refreshWeightPanel() {
     var weights = loadWeights();
-    var today = todayKey();
-    var todayEntry = null;
-    for (var i = 0; i < weights.length; i++) {
-      if (weights[i].date === today) { todayEntry = weights[i]; break; }
-    }
-    $("weightInput").value = todayEntry ? todayEntry.weight : "";
-    $("weightSubmitBtn").textContent = todayEntry ? "Mettre à jour" : "Enregistrer";
+    var dateInput = $("weightDate");
+    dateInput.max = todayKey();
+    if (!dateInput.value || dateInput.value > todayKey()) dateInput.value = todayKey();
+    syncWeightFormToDate();
+    $("weightError").hidden = true;
 
     refreshMeasurements();
 
@@ -646,12 +774,39 @@
     renderWeightList(weights);
   }
 
+  // Pré-remplit le poids si une pesée existe déjà à la date choisie
+  // (on peut ainsi corriger ou rattraper un oubli de la veille).
+  function syncWeightFormToDate() {
+    var date = $("weightDate").value || todayKey();
+    var existing = null;
+    var weights = loadWeights();
+    for (var i = 0; i < weights.length; i++) {
+      if (weights[i].date === date) { existing = weights[i]; break; }
+    }
+    $("weightInput").value = existing ? fmtNum(existing.weight) : "";
+    $("weightSubmitBtn").textContent = existing ? "Mettre à jour" : "Enregistrer";
+  }
+
   function handleWeightSubmit(e) {
     e.preventDefault();
-    var val = parseFloat($("weightInput").value);
-    if (!val || val <= 0) return;
-    upsertWeight(todayKey(), round1(val));
+    var val = parseNum($("weightInput").value);
+    var date = $("weightDate").value || todayKey();
+    var err = $("weightError");
+    if (isNaN(val) || val < 30 || val > 300) {
+      err.textContent = "Poids invalide : entre un nombre entre 30 et 300 kg (ex : 78,4).";
+      err.hidden = false;
+      return;
+    }
+    if (date > todayKey()) {
+      err.textContent = "Impossible d'enregistrer une pesée dans le futur.";
+      err.hidden = false;
+      return;
+    }
+    err.hidden = true;
+    upsertWeight(date, round1(val));
+    $("weightInput").blur();
     refreshWeightPanel();
+    showToast("Pesée enregistrée : " + fmtNum(round1(val)) + " kg");
   }
 
   /* ---------------------------------------------------------
@@ -705,11 +860,11 @@
         if (arr[i][key] !== undefined) latestByField[key] = arr[i][key];
       }
     }
-    $("measWaist").value = latestByField.waist !== undefined ? latestByField.waist : "";
-    $("measChest").value = latestByField.chest !== undefined ? latestByField.chest : "";
-    $("measHips").value = latestByField.hips !== undefined ? latestByField.hips : "";
-    $("measArm").value = latestByField.arm !== undefined ? latestByField.arm : "";
-    $("measThigh").value = latestByField.thigh !== undefined ? latestByField.thigh : "";
+    $("measWaist").value = latestByField.waist !== undefined ? fmtNum(latestByField.waist) : "";
+    $("measChest").value = latestByField.chest !== undefined ? fmtNum(latestByField.chest) : "";
+    $("measHips").value = latestByField.hips !== undefined ? fmtNum(latestByField.hips) : "";
+    $("measArm").value = latestByField.arm !== undefined ? fmtNum(latestByField.arm) : "";
+    $("measThigh").value = latestByField.thigh !== undefined ? fmtNum(latestByField.thigh) : "";
 
     var cutoff = addDays(new Date(), -30).getTime();
     var trendHtml = "";
@@ -724,7 +879,7 @@
       }
       if (older.date === latest.date) continue;
       var delta = round1(latest[mkey] - older[mkey]);
-      trendHtml += '<span class="mt-chip">' + MEASUREMENT_META[mkey] + ' : ' + (delta > 0 ? "+" : "") + delta + ' cm /30j</span>';
+      trendHtml += '<span class="mt-chip">' + MEASUREMENT_META[mkey] + ' : ' + (delta > 0 ? "+" : "") + fmtNum(delta) + ' cm /30j</span>';
     }
     $("measurementsTrends").innerHTML = trendHtml;
 
@@ -736,23 +891,34 @@
       var parts = [];
       for (var p = 0; p < MEASUREMENT_FIELDS.length; p++) {
         var pkey = MEASUREMENT_FIELDS[p];
-        if (e[pkey] !== undefined) parts.push(MEASUREMENT_META[pkey].charAt(0) + ":" + e[pkey]);
+        if (e[pkey] !== undefined) parts.push(MEASUREMENT_META[pkey] + " " + fmtNum(e[pkey]));
       }
       if (parts.length === 0) continue;
       var label = e.date === today ? "Aujourd'hui" : formatDateShort(e.date);
-      html += '<li class="weight-row"><span class="wr-date">' + label + '</span><span class="wr-value">' + parts.join(" · ") + "</span></li>";
+      html += '<li class="weight-row measurement-row"><span class="wr-date">' + label + '</span><span class="wr-value">' + parts.join(" · ") + '</span>' +
+        '<button type="button" class="wr-del" data-date="' + e.date + '" aria-label="Supprimer ces mensurations">×</button></li>';
     }
     $("measurementsList").innerHTML = html;
+
+    var delButtons = $("measurementsList").querySelectorAll(".wr-del");
+    for (var d = 0; d < delButtons.length; d++) {
+      delButtons[d].addEventListener("click", function (ev) {
+        var date = ev.currentTarget.getAttribute("data-date");
+        withUndo([STORAGE_MEASUREMENTS], "Mensurations supprimées", function () {
+          saveMeasurements(loadMeasurements().filter(function (m) { return m.date !== date; }));
+        }, refreshMeasurements);
+      });
+    }
   }
 
   function handleMeasurementsSubmit(e) {
     e.preventDefault();
     var data = {
-      waist: parseFloat($("measWaist").value),
-      chest: parseFloat($("measChest").value),
-      hips: parseFloat($("measHips").value),
-      arm: parseFloat($("measArm").value),
-      thigh: parseFloat($("measThigh").value)
+      waist: parseNum($("measWaist").value),
+      chest: parseNum($("measChest").value),
+      hips: parseNum($("measHips").value),
+      arm: parseNum($("measArm").value),
+      thigh: parseNum($("measThigh").value)
     };
     var hasAny = false;
     for (var k = 0; k < MEASUREMENT_FIELDS.length; k++) {
@@ -761,6 +927,7 @@
     if (!hasAny) return;
     upsertMeasurement(todayKey(), data);
     refreshMeasurements();
+    showToast("Mensurations enregistrées");
   }
 
   /* ---------------------------------------------------------
@@ -846,13 +1013,14 @@
         for (var k = 0; k < all.length; k++) { if (all[k].id === id) { fav = all[k]; break; } }
         if (!fav) return;
 
-        var record = ensureTodayRecord();
+        var record = ensureDayRecord(currentDayKey());
         if (!record) return;
-        for (var m = 0; m < fav.items.length; m++) {
-          var item = fav.items[m];
-          addFoodToDay(record.date, { name: item.name, kcal: item.kcal, protein: item.protein, fat: item.fat, carbs: item.carbs, grams: item.grams });
-        }
-        refreshTracker();
+        withUndo([STORAGE_HISTORY], "« " + fav.name + " » ajouté", function () {
+          for (var m = 0; m < fav.items.length; m++) {
+            var item = fav.items[m];
+            addFoodToDay(record.date, { name: item.name, kcal: item.kcal, protein: item.protein, fat: item.fat, carbs: item.carbs, grams: item.grams });
+          }
+        }, refreshTracker);
       });
     }
   }
@@ -880,23 +1048,23 @@
     var delBtns = $("favoritesManageList").querySelectorAll("[data-fav-delete]");
     for (var j = 0; j < delBtns.length; j++) {
       delBtns[j].addEventListener("click", function (ev) {
-        var confirmed = window.confirm("Supprimer ce repas favori ?");
-        if (!confirmed) return;
-        deleteFavorite(ev.currentTarget.getAttribute("data-fav-delete"));
-        refreshFavoritesManage();
-        renderFavoritesQuickAdd();
+        var id = ev.currentTarget.getAttribute("data-fav-delete");
+        withUndo([STORAGE_FAVORITES], "Repas favori supprimé", function () { deleteFavorite(id); }, function () {
+          refreshFavoritesManage();
+          renderFavoritesQuickAdd();
+        });
       });
     }
   }
 
   function handleSaveAsFavorite() {
-    var record = ensureTodayRecord();
+    var record = getDayRecord(currentDayKey());
     if (!record || record.entries.length === 0) return;
-    var name = window.prompt("Nom de ce repas favori (ex : Petit-déj type) :");
-    if (!name || !name.trim()) return;
-    createFavoriteFromEntries(name.trim(), record.entries);
-    renderFavoritesQuickAdd();
-    window.alert('Repas favori "' + name.trim() + '" enregistré — retrouve-le en haut de l\'onglet Suivi ou dans Aliments > Repas favoris.');
+    uiPrompt("Nom de ce repas favori :", "Ex : Petit-déj type", function (name) {
+      createFavoriteFromEntries(name, record.entries);
+      renderFavoritesQuickAdd();
+      showToast("Repas favori « " + name + " » enregistré");
+    });
   }
 
   /* ---------------------------------------------------------
@@ -1038,6 +1206,25 @@
     a.click();
     document.body.removeChild(a);
     window.setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+    writeJSON(STORAGE_LAST_BACKUP, todayKey());
+    refreshBackupInfo();
+  }
+
+  // Rappelle depuis quand aucune sauvegarde n'a été faite : le seul
+  // vrai risque de perte de données de l'appli.
+  function refreshBackupInfo() {
+    var el = $("lastBackupInfo");
+    var last = readJSON(STORAGE_LAST_BACKUP);
+    var hasData = Object.keys(loadHistory()).length > 0;
+    if (!last) {
+      el.textContent = hasData ? "⚠ Aucune sauvegarde faite pour l'instant." : "";
+      el.className = "backup-info" + (hasData ? " backup-warn" : "");
+      return;
+    }
+    var days = Math.round((parseDateKey(todayKey()).getTime() - parseDateKey(last).getTime()) / 86400000);
+    var when = days <= 0 ? "aujourd'hui" : (days === 1 ? "hier" : "il y a " + days + " jours");
+    el.textContent = (days > 14 ? "⚠ " : "") + "Dernière sauvegarde : " + when + ".";
+    el.className = "backup-info" + (days > 14 ? " backup-warn" : "");
   }
 
   function showBackupStatus(msg, isError) {
@@ -1061,19 +1248,9 @@
         showBackupStatus("Fichier invalide : ce n'est pas une sauvegarde NaturaLift.", true);
         return;
       }
-      var confirmed = window.confirm("Importer cette sauvegarde va remplacer toutes tes données actuelles sur cet appareil (profil, historique, aliments, poids). Continuer ?");
-      if (!confirmed) return;
-
-      if (data.profile) writeJSON(STORAGE_PROFILE, data.profile);
-      if (data.history) writeJSON(STORAGE_HISTORY, data.history);
-      if (data.foods) writeJSON(STORAGE_FOODS, data.foods);
-      if (data.weights) writeJSON(STORAGE_WEIGHTS, data.weights);
-      if (data.measurements) writeJSON(STORAGE_MEASUREMENTS, data.measurements);
-      if (data.favorites) writeJSON(STORAGE_FAVORITES, data.favorites);
-      if (data.usage) writeJSON(STORAGE_USAGE, data.usage);
-
-      showBackupStatus("Import réussi. Rechargement de l'application…", false);
-      window.setTimeout(function () { window.location.reload(); }, 800);
+      uiConfirm("Importer cette sauvegarde va remplacer toutes tes données actuelles sur cet appareil (profil, historique, aliments, poids). Continuer ?", "Importer", function () {
+        applyImport(data);
+      }, true);
     };
     reader.onerror = function () {
       showBackupStatus("Impossible de lire ce fichier.", true);
@@ -1081,15 +1258,30 @@
     reader.readAsText(file);
   }
 
+  function applyImport(data) {
+    if (data.profile) writeJSON(STORAGE_PROFILE, data.profile);
+    if (data.history) writeJSON(STORAGE_HISTORY, data.history);
+    if (data.foods) writeJSON(STORAGE_FOODS, data.foods);
+    if (data.weights) writeJSON(STORAGE_WEIGHTS, data.weights);
+    if (data.measurements) writeJSON(STORAGE_MEASUREMENTS, data.measurements);
+    if (data.favorites) writeJSON(STORAGE_FAVORITES, data.favorites);
+    if (data.usage) writeJSON(STORAGE_USAGE, data.usage);
+
+    showBackupStatus("Import réussi. Rechargement de l'application…", false);
+    window.setTimeout(function () { window.location.reload(); }, 800);
+  }
+
   /* ---------------------------------------------------------
-     Open Food Facts — recherche par code-barres
+     Open Food Facts — recherche par code-barres (API v2)
      --------------------------------------------------------- */
 
   function lookupOpenFoodFacts(barcode, onDone) {
-    var url = OFF_API_BASE + encodeURIComponent(barcode) + ".json";
+    var url = OFF_API_BASE + encodeURIComponent(barcode) + ".json?fields=" + OFF_FIELDS;
 
     fetch(url)
       .then(function (response) {
+        // 404 = produit inconnu (pas une erreur réseau)
+        if (response.status === 404) return { status: 0 };
         if (!response.ok) throw new Error("http-" + response.status);
         return response.json();
       })
@@ -1102,7 +1294,10 @@
         var p = data.product;
         var nutr = p.nutriments || {};
 
-        var name = p.product_name || p.product_name_fr || p.generic_name || ("Produit " + barcode);
+        var name = p.product_name_fr || p.product_name || p.generic_name_fr || p.generic_name || ("Produit " + barcode);
+        // La marque aide à distinguer deux produits au nom identique.
+        var brand = p.brands ? String(p.brands).split(",")[0].trim() : "";
+        if (brand && name.toLowerCase().indexOf(brand.toLowerCase()) === -1) name += " (" + brand + ")";
 
         var kcal = nutr["energy-kcal_100g"];
         if (kcal === undefined || kcal === null) {
@@ -1126,14 +1321,17 @@
   }
 
   /* ---------------------------------------------------------
-     Scanner caméra — overlay partagé (une seule session à la fois)
-     Utilise la bibliothèque html5-qrcode chargée via CDN. Si elle
-     n'est pas disponible (pas de réseau, bloquée, etc.) ou si la
-     caméra est refusée/absente, un message clair est affiché et
-     l'utilisateur peut basculer sur la saisie manuelle.
+     Scanner caméra — overlay partagé.
+     1) Détecteur natif du navigateur (BarcodeDetector, présent sur
+        Chrome Android) : rapide, et fonctionne hors-ligne.
+     2) Sinon, bibliothèque html5-qrcode, chargée seulement à ce
+        moment-là (inutile de la télécharger à chaque ouverture).
      --------------------------------------------------------- */
 
-  var scannerState = { instance: null, active: false, onResult: null };
+  var SCANNER_LIB_URL = "https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js";
+  var NATIVE_FORMATS = ["ean_13", "ean_8", "upc_a", "upc_e", "code_128"];
+
+  var scannerState = { active: false, onResult: null, stream: null, timer: null, lib: null };
 
   function showScannerError(msg) {
     $("scannerHint").hidden = true;
@@ -1141,11 +1339,29 @@
     $("scannerError").textContent = msg;
   }
 
+  function cameraErrorMessage(err) {
+    var str = (err && err.name ? err.name + " " : "") + ((err && err.toString) ? err.toString() : String(err));
+    if (str.indexOf("NotAllowedError") !== -1 || str.indexOf("Permission") !== -1) {
+      return "Accès à la caméra refusé. Autorise la caméra pour ce site dans les paramètres de ton navigateur, puis réessaie.";
+    }
+    if (str.indexOf("NotFoundError") !== -1) return "Aucune caméra détectée sur cet appareil.";
+    if (str.indexOf("NotReadableError") !== -1) return "La caméra est déjà utilisée par une autre application.";
+    return "Impossible d'accéder à la caméra.";
+  }
+
   function stopScannerCamera() {
-    if (scannerState.instance && scannerState.active) {
-      scannerState.active = false;
-      scannerState.instance.stop().then(function () {
-        try { scannerState.instance.clear(); } catch (e) { /* noop */ }
+    scannerState.active = false;
+    if (scannerState.timer) { window.clearTimeout(scannerState.timer); scannerState.timer = null; }
+    if (scannerState.stream) {
+      var tracks = scannerState.stream.getTracks();
+      for (var i = 0; i < tracks.length; i++) tracks[i].stop();
+      scannerState.stream = null;
+    }
+    if (scannerState.lib) {
+      var lib = scannerState.lib;
+      scannerState.lib = null;
+      lib.stop().then(function () {
+        try { lib.clear(); } catch (e) { /* noop */ }
       }).catch(function () { /* déjà arrêté */ });
     }
   }
@@ -1153,12 +1369,108 @@
   function closeScanner() {
     stopScannerCamera();
     $("scannerOverlay").hidden = true;
+    $("scannerReader").innerHTML = "";
+  }
+
+  function scannerFound(code) {
+    if (!scannerState.active) return;
+    if (navigator.vibrate) { try { navigator.vibrate(60); } catch (e) { /* noop */ } }
+    var cb = scannerState.onResult;
+    closeScanner();
+    if (cb) cb(code);
+  }
+
+  function startNativeScanner(formats) {
+    var detector;
+    try { detector = new window.BarcodeDetector({ formats: formats }); } catch (e) { startLibScanner(); return; }
+
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } }, audio: false })
+      .then(function (stream) {
+        if (!scannerState.active) {
+          var t = stream.getTracks();
+          for (var i = 0; i < t.length; i++) t[i].stop();
+          return;
+        }
+        scannerState.stream = stream;
+        var video = document.createElement("video");
+        video.setAttribute("playsinline", "");
+        video.muted = true;
+        video.srcObject = stream;
+        var frame = document.createElement("div");
+        frame.className = "scanner-frame";
+        var reader = $("scannerReader");
+        reader.innerHTML = "";
+        reader.appendChild(video);
+        reader.appendChild(frame);
+        var playing = video.play();
+        if (playing && playing.catch) playing.catch(function () { /* noop */ });
+
+        function tick() {
+          if (!scannerState.active) return;
+          if (video.readyState < 2) { scannerState.timer = window.setTimeout(tick, 150); return; }
+          detector.detect(video).then(function (codes) {
+            if (codes && codes.length > 0 && codes[0].rawValue) scannerFound(codes[0].rawValue);
+            else if (scannerState.active) scannerState.timer = window.setTimeout(tick, 150);
+          }).catch(function () {
+            if (scannerState.active) scannerState.timer = window.setTimeout(tick, 300);
+          });
+        }
+        tick();
+      })
+      .catch(function (err) { showScannerError(cameraErrorMessage(err)); });
+  }
+
+  function loadScannerLib(onReady, onError) {
+    if (typeof Html5Qrcode !== "undefined") { onReady(); return; }
+    var existing = document.getElementById("scannerLibScript");
+    if (existing) existing.parentNode.removeChild(existing);
+    var script = document.createElement("script");
+    script.id = "scannerLibScript";
+    script.src = SCANNER_LIB_URL;
+    script.onload = onReady;
+    script.onerror = onError;
+    document.head.appendChild(script);
+  }
+
+  function startLibScanner() {
+    $("scannerHint").textContent = "Chargement du scanner…";
+    loadScannerLib(function () {
+      if (!scannerState.active) return;
+      $("scannerHint").textContent = "Cadre le code-barres du produit dans la zone ci-dessus.";
+      if (typeof Html5Qrcode === "undefined") {
+        showScannerError("Scanner indisponible : la bibliothèque de lecture n'a pas pu être chargée.");
+        return;
+      }
+      var scanConfig = { fps: 10, qrbox: { width: 260, height: 160 } };
+      if (typeof Html5QrcodeSupportedFormats !== "undefined") {
+        scanConfig.formatsToSupport = [
+          Html5QrcodeSupportedFormats.EAN_13,
+          Html5QrcodeSupportedFormats.EAN_8,
+          Html5QrcodeSupportedFormats.UPC_A,
+          Html5QrcodeSupportedFormats.UPC_E,
+          Html5QrcodeSupportedFormats.CODE_128
+        ];
+      }
+      var lib = new Html5Qrcode("scannerReader");
+      scannerState.lib = lib;
+      lib.start({ facingMode: "environment" }, scanConfig, function (decodedText) {
+        scannerFound(decodedText);
+      }, function () { /* aucune détection sur cette frame : normal */ })
+        .catch(function (err) {
+          scannerState.lib = null;
+          showScannerError(cameraErrorMessage(err));
+        });
+    }, function () {
+      showScannerError("Scanner indisponible hors connexion sur ce téléphone. Vérifie ta connexion internet, ou passe en saisie « Manuel ».");
+    });
   }
 
   function openScanner(onBarcodeFound) {
     scannerState.onResult = onBarcodeFound;
+    scannerState.active = true;
     $("scannerOverlay").hidden = false;
     $("scannerHint").hidden = false;
+    $("scannerHint").textContent = "Cadre le code-barres du produit dans la zone ci-dessus.";
     $("scannerError").hidden = true;
     $("scannerReader").innerHTML = "";
 
@@ -1166,51 +1478,20 @@
       showScannerError("Le scanner nécessite une connexion sécurisée (HTTPS). Impossible d'accéder à la caméra ici.");
       return;
     }
-    if (typeof Html5Qrcode === "undefined") {
-      showScannerError("Scanner indisponible : la bibliothèque de lecture n'a pas pu être chargée. Vérifie ta connexion internet et réessaie.");
-      return;
-    }
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       showScannerError("Caméra non disponible sur cet appareil ou ce navigateur.");
       return;
     }
 
-    var scanConfig = { fps: 10, qrbox: { width: 260, height: 160 } };
-    if (typeof Html5QrcodeSupportedFormats !== "undefined") {
-      scanConfig.formatsToSupport = [
-        Html5QrcodeSupportedFormats.EAN_13,
-        Html5QrcodeSupportedFormats.EAN_8,
-        Html5QrcodeSupportedFormats.UPC_A,
-        Html5QrcodeSupportedFormats.UPC_E,
-        Html5QrcodeSupportedFormats.CODE_128
-      ];
+    if ("BarcodeDetector" in window && window.BarcodeDetector.getSupportedFormats) {
+      window.BarcodeDetector.getSupportedFormats().then(function (supported) {
+        var formats = NATIVE_FORMATS.filter(function (f) { return supported.indexOf(f) !== -1; });
+        if (formats.length > 0) startNativeScanner(formats);
+        else startLibScanner();
+      }).catch(startLibScanner);
+    } else {
+      startLibScanner();
     }
-
-    scannerState.instance = new Html5Qrcode("scannerReader");
-    scannerState.active = true;
-
-    scannerState.instance.start(
-      { facingMode: "environment" },
-      scanConfig,
-      function (decodedText) {
-        stopScannerCamera();
-        $("scannerOverlay").hidden = true;
-        if (scannerState.onResult) scannerState.onResult(decodedText);
-      },
-      function () { /* aucune détection sur cette frame : normal, on ignore */ }
-    ).catch(function (err) {
-      scannerState.active = false;
-      var str = (err && err.toString) ? err.toString() : String(err);
-      var msg = "Impossible d'accéder à la caméra.";
-      if (str.indexOf("NotAllowedError") !== -1 || str.indexOf("Permission") !== -1) {
-        msg = "Accès à la caméra refusé. Autorise la caméra dans les paramètres de ton navigateur pour scanner un produit.";
-      } else if (str.indexOf("NotFoundError") !== -1) {
-        msg = "Aucune caméra détectée sur cet appareil.";
-      } else if (str.indexOf("NotReadableError") !== -1) {
-        msg = "La caméra est déjà utilisée par une autre application.";
-      }
-      showScannerError(msg);
-    });
   }
 
   /* ---------------------------------------------------------
@@ -1252,17 +1533,17 @@
     return record;
   }
 
-  function ensureTodayRecord() {
+  // Crée la journée si besoin, avec les cibles actuelles du profil.
+  function ensureDayRecord(dateKey) {
     var profile = readJSON(STORAGE_PROFILE);
     if (!profile) return null;
 
-    var key = todayKey();
     var history = loadHistory();
-    var record = history[key];
+    var record = history[dateKey];
     if (!record) {
-      record = { date: key, entries: [], targets: profile.targets, validated: false };
-      history[key] = record;
-      saveHistory(history);
+      record = { date: dateKey, entries: [], targets: profile.targets };
+      history[dateKey] = record;
+      if (!saveHistory(history)) return null;
     }
     return record;
   }
@@ -1281,28 +1562,9 @@
     var history = loadHistory();
     var record = history[dateKey];
     if (!record) return null;
-    var filtered = [];
-    for (var i = 0; i < record.entries.length; i++) {
-      if (record.entries[i].id !== entryId) filtered.push(record.entries[i]);
-    }
-    record.entries = filtered;
+    record.entries = record.entries.filter(function (e) { return e.id !== entryId; });
     saveHistory(history);
     return record;
-  }
-
-  function setDayValidated(dateKey, validated) {
-    var history = loadHistory();
-    var record = history[dateKey];
-    if (!record) return null;
-    record.validated = validated;
-    saveHistory(history);
-    return record;
-  }
-
-  function deleteDayRecord(dateKey) {
-    var history = loadHistory();
-    delete history[dateKey];
-    saveHistory(history);
   }
 
   function sumEntries(entries) {
@@ -1320,22 +1582,17 @@
   function migrateLegacyLog() {
     var legacy = readJSON(STORAGE_LOG_LEGACY);
     if (!legacy || !legacy.date || !legacy.entries) {
-      localStorage.removeItem(STORAGE_LOG_LEGACY);
+      try { localStorage.removeItem(STORAGE_LOG_LEGACY); } catch (e) { /* noop */ }
       return;
     }
     var history = loadHistory();
     if (!history[legacy.date]) {
       var profile = readJSON(STORAGE_PROFILE);
       var targets = profile ? profile.targets : { kcal: 0, protein: 0, fat: 0, carbs: 0 };
-      history[legacy.date] = {
-        date: legacy.date,
-        entries: legacy.entries,
-        targets: targets,
-        validated: false
-      };
+      history[legacy.date] = { date: legacy.date, entries: legacy.entries, targets: targets };
       saveHistory(history);
     }
-    localStorage.removeItem(STORAGE_LOG_LEGACY);
+    try { localStorage.removeItem(STORAGE_LOG_LEGACY); } catch (e2) { /* noop */ }
   }
 
   /* ---------------------------------------------------------
@@ -1346,9 +1603,9 @@
      --------------------------------------------------------- */
 
   function setDayType(dateKey, type) {
+    if (!ensureDayRecord(dateKey)) return null;
     var history = loadHistory();
     var record = history[dateKey];
-    if (!record) return null;
     record.dayType = (type === "neutral") ? null : type;
     saveHistory(history);
     return record;
@@ -1373,7 +1630,7 @@
   }
 
   /* ---------------------------------------------------------
-     Statut d'une journée (couleur)
+     Statut d'une journée (couleur dans l'historique)
      --------------------------------------------------------- */
 
   function dayStatus(record) {
@@ -1393,60 +1650,219 @@
     return "red";
   }
 
-  function gaugeColor(pct, isProtein) {
-    if (isProtein) {
-      if (pct < 90) return "var(--amber)";
-      if (pct <= 140) return "var(--lime)";
-      return "var(--cyan)";
-    }
-    if (pct < 95) return "var(--cyan)";
-    if (pct <= 110) return "var(--lime)";
-    return "var(--red)";
-  }
-
   /* ---------------------------------------------------------
-     Rendu générique — jauges circulaires
+     Jauges circulaires
+     Chaque macro garde TOUJOURS sa couleur (calories blanc,
+     protéines lime, lipides ambre, glucides cyan) ; le statut
+     est écrit en clair sous la jauge, et l'anneau passe au rouge
+     seulement en cas de dépassement net.
      --------------------------------------------------------- */
 
-  function gaugesHtml(totals, targets, small) {
-    var defs = [
-      { key: "kcal", label: "Calories", unit: "kcal", isProtein: false },
-      { key: "protein", label: "Protéines", unit: "g", isProtein: true },
-      { key: "fat", label: "Lipides", unit: "g", isProtein: false },
-      { key: "carbs", label: "Glucides", unit: "g", isProtein: false }
-    ];
+  var GAUGE_DEFS = [
+    { key: "kcal", label: "Calories", unit: "kcal", color: "var(--text)", okFrom: 90, overAbove: 110 },
+    { key: "protein", label: "Protéines", unit: "g", color: "var(--lime)", okFrom: 90, overAbove: null },
+    { key: "fat", label: "Lipides", unit: "g", color: "var(--amber)", okFrom: 85, overAbove: 125 },
+    { key: "carbs", label: "Glucides", unit: "g", color: "var(--cyan)", okFrom: 85, overAbove: 120 }
+  ];
 
+  function gaugesHtml(totals, targets, isAverage) {
     var html = "";
-    for (var i = 0; i < defs.length; i++) {
-      var d = defs[i];
+    for (var i = 0; i < GAUGE_DEFS.length; i++) {
+      var d = GAUGE_DEFS[i];
       var value = totals[d.key] || 0;
       var target = targets[d.key] || 0;
       var pct = target > 0 ? (value / target) * 100 : 0;
-      var displayPct = Math.min(pct, 100);
-      var color = gaugeColor(pct, d.isProtein);
+      var isOver = d.overAbove !== null && pct > d.overAbove;
+      var color = isOver ? "var(--red)" : d.color;
+
+      var status, statusCls;
+      if (isAverage) {
+        status = round(pct) + "\u00a0% de la cible";
+        statusCls = isOver ? "gs-over" : (pct >= d.okFrom ? "gs-ok" : "gs-left");
+      } else if (isOver) {
+        status = "+" + round(value - target) + " " + d.unit + " de trop";
+        statusCls = "gs-over";
+      } else if (pct >= d.okFrom) {
+        status = "✓ Atteint";
+        statusCls = "gs-ok";
+      } else {
+        status = "Reste " + round(target - value) + " " + d.unit;
+        statusCls = "gs-left";
+      }
 
       html +=
-        '<div class="gauge' + (small ? ' gauge-sm' : '') + '">' +
-          '<div class="gauge-ring" style="--pct:' + displayPct.toFixed(0) + ';--ring-color:' + color + '">' +
+        '<div class="gauge' + (isAverage ? ' gauge-sm' : '') + '">' +
+          '<div class="gauge-ring" style="--pct:' + Math.min(pct, 100).toFixed(0) + ';--ring-color:' + color + '">' +
             '<div class="gauge-ring-inner"></div>' +
             '<div class="gauge-text">' +
               '<span class="gauge-value">' + round(value) + '</span>' +
               '<span class="gauge-target">/ ' + round(target) + ' ' + d.unit + '</span>' +
             '</div>' +
           '</div>' +
-          '<span class="gauge-label">' + d.label + '</span>' +
+          '<span class="gauge-label" style="color:' + d.color + '">' + d.label + '</span>' +
+          '<span class="gauge-status ' + statusCls + '">' + status + '</span>' +
         '</div>';
     }
     return html;
   }
 
   /* ---------------------------------------------------------
-     Rendu — Calculateur
+     Dépense réelle (TDEE adaptatif)
+     Si tu manges en moyenne X kcal/jour et que ton poids baisse de
+     Y kg/jour, ta dépense réelle ≈ X + Y × 7700. C'est beaucoup plus
+     fiable que la formule (qui peut se tromper de 10 à 20 %), à
+     condition de noter tout ce que tu manges.
      --------------------------------------------------------- */
 
-  function renderResults(targets, sex) {
-    $("kcalDaily").textContent = targets.kcal;
+  var TDEE_WINDOW_DAYS = 28;
+  var TDEE_MIN_LOGGED_DAYS = 10;
+  var TDEE_MIN_WEIGH_INS = 5;
+  var TDEE_MIN_WEIGHT_SPAN_DAYS = 14;
+
+  function estimateRealTdee() {
+    var history = loadHistory();
+    var today = new Date();
+
+    // Apports : jours renseignés de la fenêtre (hors aujourd'hui, pas
+    // terminé). Un jour à moins de 50 % de sa cible est sans doute un
+    // oubli de saisie : on l'écarte pour ne pas fausser la moyenne.
+    var kcalSum = 0, logged = 0;
+    for (var i = 1; i <= TDEE_WINDOW_DAYS; i++) {
+      var r = history[dateKeyFromDate(addDays(today, -i))];
+      if (!r || r.entries.length === 0) continue;
+      var tot = sumEntries(r.entries).kcal;
+      var tg = effectiveTargetsFor(r);
+      if (tg && tg.kcal > 0 && tot < tg.kcal * 0.5) continue;
+      kcalSum += tot;
+      logged++;
+    }
+
+    // Poids : pente d'une régression linéaire sur les pesées de la
+    // fenêtre (bien moins sensible à l'eau qu'un écart début/fin).
+    var startTime = addDays(today, -TDEE_WINDOW_DAYS).getTime();
+    var pts = [];
+    var weights = loadWeights();
+    for (var w = 0; w < weights.length; w++) {
+      var t = parseDateKey(weights[w].date).getTime();
+      if (t >= startTime) pts.push({ x: t / 86400000, y: weights[w].weight });
+    }
+    var span = pts.length > 1 ? pts[pts.length - 1].x - pts[0].x : 0;
+
+    var base = { loggedDays: logged, weighIns: pts.length };
+    if (logged < TDEE_MIN_LOGGED_DAYS || pts.length < TDEE_MIN_WEIGH_INS || span < TDEE_MIN_WEIGHT_SPAN_DAYS) {
+      base.status = "need";
+      return base;
+    }
+
+    var mx = 0, my = 0;
+    for (var a = 0; a < pts.length; a++) { mx += pts[a].x; my += pts[a].y; }
+    mx /= pts.length; my /= pts.length;
+    var num = 0, den = 0;
+    for (var b = 0; b < pts.length; b++) {
+      num += (pts[b].x - mx) * (pts[b].y - my);
+      den += (pts[b].x - mx) * (pts[b].x - mx);
+    }
+    var slopePerDay = den > 0 ? num / den : 0;
+
+    var avgIntake = kcalSum / logged;
+    var tdee = avgIntake - slopePerDay * KCAL_PER_KG;
+
+    base.avgIntake = round(avgIntake);
+    base.weeklyChange = round1(slopePerDay * 7);
+    base.tdee = Math.round(tdee / 10) * 10;
+    base.status = (tdee < 1200 || tdee > 5500) ? "weird" : "ok";
+    return base;
+  }
+
+  function renderTdeeCard(profile) {
+    var card = $("tdeeCard");
+    if (!profile) { card.hidden = true; return; }
+    card.hidden = false;
+
+    var est = estimateRealTdee();
+    var useBtn = $("tdeeUseBtn");
+    var resetBtn = $("tdeeResetBtn");
+    var formula = computeTargets(profile).tdeeFormula;
+    var using = !!profile.tdeeOverride;
+    var text;
+
+    if (est.status === "need") {
+      text = "Pour calculer ta vraie dépense, il faut au moins " + TDEE_MIN_LOGGED_DAYS + " jours de journal complet et " +
+        TDEE_MIN_WEIGH_INS + " pesées sur 2 semaines (dans les 4 dernières). Pour l'instant : " +
+        est.loggedDays + " jour" + (est.loggedDays > 1 ? "s" : "") + " et " + est.weighIns + " pesée" + (est.weighIns > 1 ? "s" : "") + ".";
+      useBtn.hidden = true;
+    } else if (est.status === "weird") {
+      text = "Le calcul donne une valeur incohérente : ton journal est sans doute incomplet sur certains jours. Continue à tout noter, il se corrigera.";
+      useBtn.hidden = true;
+    } else {
+      text = "Sur tes 4 dernières semaines (" + est.loggedDays + " jours renseignés), tu as mangé en moyenne " +
+        est.avgIntake.toLocaleString("fr-FR") + " kcal/jour et ton poids a varié de " +
+        (est.weeklyChange > 0 ? "+" : "") + fmtNum(est.weeklyChange) + " kg/semaine. " +
+        "Ta dépense réelle est donc d'environ " + est.tdee.toLocaleString("fr-FR") + " kcal/jour" +
+        (formula ? " (la formule estimait " + formula.toLocaleString("fr-FR") + ")" : "") + ". " +
+        "Fiable seulement si tu notes vraiment tout ce que tu manges.";
+      useBtn.hidden = using && Math.abs(profile.tdeeOverride - est.tdee) < 50;
+      useBtn.textContent = using ? "Mettre à jour avec " + est.tdee.toLocaleString("fr-FR") + " kcal" : "Utiliser ma dépense réelle";
+      useBtn.setAttribute("data-tdee", est.tdee);
+    }
+
+    if (using) {
+      text += " Tes cibles utilisent actuellement ta dépense réelle (" + profile.tdeeOverride.toLocaleString("fr-FR") + " kcal).";
+    }
+    $("tdeeText").textContent = text;
+    resetBtn.hidden = !using;
+  }
+
+  function handleTdeeUse() {
+    var profile = readJSON(STORAGE_PROFILE);
+    var val = parseInt($("tdeeUseBtn").getAttribute("data-tdee"), 10);
+    if (!profile || !val) return;
+    profile.tdeeOverride = val;
+    var targets = applyProfile(profile);
+    renderResults(targets, profile);
+    showToast("Cibles recalculées avec ta dépense réelle");
+  }
+
+  function handleTdeeReset() {
+    var profile = readJSON(STORAGE_PROFILE);
+    if (!profile) return;
+    delete profile.tdeeOverride;
+    var targets = applyProfile(profile);
+    renderResults(targets, profile);
+    showToast("Retour à la formule");
+  }
+
+  /* ---------------------------------------------------------
+     Profil & objectif (overlay ⚙)
+     --------------------------------------------------------- */
+
+  // Calcule et enregistre les cibles d'un profil. La journée en cours
+  // prend les nouvelles cibles (elle n'est pas terminée) ; les journées
+  // passées gardent les leurs, pour que l'historique reste exact.
+  function applyProfile(profile) {
+    var targets = computeTargets(profile);
+    profile.targets = targets;
+    writeJSON(STORAGE_PROFILE, profile);
+
+    var todayRecord = getDayRecord(todayKey());
+    if (todayRecord) {
+      todayRecord.targets = targets;
+      upsertDayRecord(todayRecord);
+    }
+    return targets;
+  }
+
+  function renderResults(targets, profile) {
+    $("kcalDaily").textContent = targets.kcal.toLocaleString("fr-FR");
     $("objectiveLabel").textContent = targets.objectiveLabel;
+
+    // Détails recalculés à l'affichage : les profils enregistrés par
+    // une ancienne version de l'appli ne les contiennent pas.
+    var meta = computeTargets(profile);
+    var adj = meta.kcalAdjustPct;
+    var adjLabel = adj === 0 ? "sans ajustement" : (adj > 0 ? "+" : "−") + Math.abs(adj) + "\u00a0%";
+    $("kcalSource").textContent = (meta.tdeeSource === "real" ? "Ta dépense réelle mesurée (" : "Ta dépense estimée par formule (") +
+      meta.tdee.toLocaleString("fr-FR") + " kcal), " + adjLabel + ".";
 
     var macroKeys = ["protein", "fat", "carbs"];
     var html = "";
@@ -1467,124 +1883,124 @@
     $("macroList").innerHTML = html;
 
     var periods = [
-      { label: "Jour", mult: 1, unit: "kcal" },
-      { label: "Semaine", mult: 7, unit: "kcal" },
-      { label: "Mois", mult: 30, unit: "kcal" }
+      { label: "Jour", mult: 1 },
+      { label: "Semaine", mult: 7 },
+      { label: "Mois", mult: 30 }
     ];
     var periodHtml = "";
     for (var p = 0; p < periods.length; p++) {
-      var period = periods[p];
       periodHtml +=
         '<div class="period-cell">' +
-          '<span class="p-label">' + period.label + '</span>' +
-          '<span class="p-value">' + (targets.kcal * period.mult).toLocaleString("fr-FR") + '</span>' +
-          '<span class="p-unit">' + period.unit + '</span>' +
+          '<span class="p-label">' + periods[p].label + '</span>' +
+          '<span class="p-value">' + (targets.kcal * periods[p].mult).toLocaleString("fr-FR") + '</span>' +
+          '<span class="p-unit">kcal</span>' +
         '</div>';
     }
     $("periodTable").innerHTML = periodHtml;
 
-    $("femaleNote").hidden = sex !== "F";
+    $("femaleNote").hidden = profile.sex !== "F";
     $("results").hidden = false;
+    renderTdeeCard(profile);
   }
 
-  // Calcule et enregistre les cibles d'un profil. La journée en cours
-  // prend les nouvelles cibles (elle n'est pas terminée) ; les journées
-  // passées gardent les leurs, pour que l'historique reste exact.
-  function applyProfile(profile) {
-    var targets = computeTargets(profile);
-    profile.targets = targets;
-    writeJSON(STORAGE_PROFILE, profile);
+  function fillProfileForm(profile) {
+    var sexInput = document.getElementById(profile.sex === "F" ? "sexF" : "sexH");
+    if (sexInput) sexInput.checked = true;
+    $("age").value = profile.age;
+    $("weight").value = fmtNum(profile.weight);
+    $("height").value = profile.height;
+    $("activity").value = profile.activity;
+    $("objective").value = profile.objective;
+  }
 
-    var todayRecord = getDayRecord(todayKey());
-    if (todayRecord) {
-      todayRecord.targets = targets;
-      upsertDayRecord(todayRecord);
+  function openSettings() {
+    var profile = readJSON(STORAGE_PROFILE);
+    $("welcomeNote").hidden = !!profile;
+    $("calcError").hidden = true;
+    if (profile) {
+      fillProfileForm(profile);
+      renderResults(profile.targets, profile);
+      $("calcSubmit").textContent = "Recalculer mes objectifs";
+    } else {
+      $("results").hidden = true;
+      $("calcSubmit").textContent = "Calculer mes objectifs";
     }
-    return targets;
+    $("settingsOverlay").hidden = false;
+    $("settingsOverlay").scrollTop = 0;
+    document.body.classList.add("no-scroll");
   }
 
-  function openSettings() { $("settingsOverlay").hidden = false; }
-  function closeSettings() { $("settingsOverlay").hidden = true; }
+  function closeSettings() {
+    $("settingsOverlay").hidden = true;
+    document.body.classList.remove("no-scroll");
+    refreshActiveTab();
+  }
 
   function handleCalcSubmit(e) {
     e.preventDefault();
 
     var sex = document.querySelector('input[name="sex"]:checked').value;
+    var age = parseNum($("age").value);
+    var weight = parseNum($("weight").value);
+    var height = parseNum($("height").value);
+    var err = $("calcError");
+
+    var problem = null;
+    if (isNaN(age) || age < 14 || age > 90) problem = "Âge invalide (entre 14 et 90 ans).";
+    else if (isNaN(weight) || weight < 30 || weight > 250) problem = "Poids invalide (entre 30 et 250 kg, ex : 78,4).";
+    else if (isNaN(height) || height < 120 || height > 230) problem = "Taille invalide (entre 120 et 230 cm).";
+    if (problem) {
+      err.textContent = problem;
+      err.hidden = false;
+      return;
+    }
+    err.hidden = true;
+
+    var previous = readJSON(STORAGE_PROFILE);
     var profile = {
       sex: sex,
-      age: parseFloat($("age").value),
-      weight: parseFloat($("weight").value),
-      height: parseFloat($("height").value),
+      age: age,
+      weight: round1(weight),
+      height: height,
       activity: parseFloat($("activity").value),
       objective: $("objective").value
     };
+    // La dépense réelle mesurée reste valable si on change d'objectif.
+    if (previous && previous.tdeeOverride) profile.tdeeOverride = previous.tdeeOverride;
 
     var targets = applyProfile(profile);
-
-    $("noProfileGoal").hidden = true;
-    renderResults(targets, sex);
-    closeSettings();
-    switchTab("calc");
+    $("welcomeNote").hidden = true;
+    $("calcSubmit").textContent = "Recalculer mes objectifs";
+    renderResults(targets, profile);
     $("results").scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
-  function loadExistingProfile() {
-    var profile = readJSON(STORAGE_PROFILE);
-    if (!profile) {
-      $("noProfileGoal").hidden = false;
-      $("results").hidden = true;
-      return;
-    }
-    $("noProfileGoal").hidden = true;
-
-    var sexInput = document.getElementById(profile.sex === "F" ? "sexF" : "sexH");
-    if (sexInput) sexInput.checked = true;
-    $("age").value = profile.age;
-    $("weight").value = profile.weight;
-    $("height").value = profile.height;
-    $("activity").value = profile.activity;
-    $("objective").value = profile.objective;
-
-    renderResults(profile.targets, profile.sex);
-  }
-
   /* ---------------------------------------------------------
-     Ajout d'aliment générique — réutilisé par le Suivi et le
-     détail d'une journée passée. Trois sous-modes partagent le
-     même sélecteur segmenté : base de données (recherche +
-     autocomplétion custom), scanner (caméra + Open Food Facts)
-     et saisie manuelle.
+     Ajout d'aliment — trois sous-modes partagent le même
+     sélecteur : base de données (recherche + autocomplétion),
+     scanner (caméra + Open Food Facts) et saisie manuelle.
      --------------------------------------------------------- */
 
   function setupFoodEntryUI(cfg) {
-    // cfg = {
-    //   modeDb, modeScan, modeManual,           radios
-    //   dbForm, scanPanel, manualForm,          conteneurs des 3 modes
-    //   searchInput, suggestionsEl, noMatchEl, previewEl, gramsInput, dbSubmitBtn,
-    //   manualFields: { name, kcal, protein, fat, carbs },
-    //   scan: {
-    //     openBtn, statusEl, notFoundEl, notFoundMsgEl, useManualBtn,
-    //     form, nameInput, kcalInput, proteinInput, fatInput, carbsInput,
-    //     gramsInput, saveToDbCheckbox, incompleteEl
-    //   },
-    //   getDateKey, onAdded
-    // }
-
     var activeIndex = -1;
     var currentMatches = [];
+
+    function added(entry) {
+      showToast("Ajouté : " + entry.name + (entry.grams ? " (" + fmtNum(entry.grams) + " g)" : ""));
+      cfg.onAdded();
+    }
 
     /* ---------- Mode "Ma base" (recherche + autocomplétion) ---------- */
 
     function currentExactMatch() {
-      var foods = loadFoods();
-      return findFoodByName(foods, cfg.searchInput.value);
+      return findFoodByName(loadFoods(), cfg.searchInput.value);
     }
 
     function updatePreview() {
       var match = currentExactMatch();
       if (!match) {
         cfg.previewEl.hidden = true;
-        cfg.noMatchEl.hidden = cfg.searchInput.value.trim() === "";
+        cfg.noMatchEl.hidden = cfg.searchInput.value.trim() === "" || !cfg.suggestionsEl.hidden;
         cfg.dbSubmitBtn.disabled = true;
         return;
       }
@@ -1592,7 +2008,7 @@
       cfg.previewEl.hidden = false;
       cfg.previewEl.innerHTML =
         '<span class="fp-name">' + escapeHtml(match.name) +
-          '<span class="fp-macros">P ' + match.protein + 'g · L ' + match.fat + 'g · G ' + match.carbs + 'g /100g</span>' +
+          '<span class="fp-macros">P ' + fmtNum(match.protein) + 'g · L ' + fmtNum(match.fat) + 'g · G ' + fmtNum(match.carbs) + 'g /100g</span>' +
         '</span>' +
         '<span class="fp-kcal">' + match.kcal + ' kcal/100g</span>';
       cfg.dbSubmitBtn.disabled = false;
@@ -1635,7 +2051,7 @@
         html +=
           '<div class="autocomplete-item" data-index="' + i + '">' +
             escapeHtml(f.name) +
-            '<span class="ai-macros">' + f.kcal + ' kcal · P' + f.protein + ' L' + f.fat + ' G' + f.carbs + ' /100g</span>' +
+            '<span class="ai-macros">' + f.kcal + ' kcal · P' + fmtNum(f.protein) + ' L' + fmtNum(f.fat) + ' G' + fmtNum(f.carbs) + ' /100g</span>' +
           '</div>';
       }
       cfg.suggestionsEl.innerHTML = html;
@@ -1652,14 +2068,14 @@
     }
 
     cfg.searchInput.addEventListener("input", function () {
-      updatePreview();
       renderSuggestions();
+      updatePreview();
     });
     cfg.searchInput.addEventListener("focus", function () {
-      if (cfg.searchInput.value.trim() !== "") renderSuggestions();
+      if (cfg.searchInput.value.trim() !== "" && !currentExactMatch()) renderSuggestions();
     });
     cfg.searchInput.addEventListener("blur", function () {
-      window.setTimeout(hideSuggestions, 150);
+      window.setTimeout(function () { hideSuggestions(); updatePreview(); }, 150);
     });
     cfg.searchInput.addEventListener("keydown", function (ev) {
       if (cfg.suggestionsEl.hidden) return;
@@ -1672,10 +2088,8 @@
         activeIndex = Math.max(activeIndex - 1, 0);
         highlightActive();
       } else if (ev.key === "Enter") {
-        if (activeIndex >= 0 && currentMatches[activeIndex]) {
-          ev.preventDefault();
-          selectMatch(currentMatches[activeIndex]);
-        }
+        ev.preventDefault();
+        selectMatch(currentMatches[activeIndex >= 0 ? activeIndex : 0]);
       } else if (ev.key === "Escape") {
         hideSuggestions();
       }
@@ -1685,8 +2099,8 @@
       e.preventDefault();
       var match = currentExactMatch();
       if (!match) return;
-      var grams = parseFloat(cfg.gramsInput.value) || 0;
-      if (grams <= 0) return;
+      var grams = parseNum(cfg.gramsInput.value);
+      if (isNaN(grams) || grams <= 0) { cfg.gramsInput.focus(); return; }
       var factor = grams / 100;
 
       var entry = {
@@ -1711,37 +2125,38 @@
       cfg.noMatchEl.hidden = true;
       cfg.dbSubmitBtn.disabled = true;
       hideSuggestions();
-      cfg.onAdded();
+      cfg.gramsInput.blur();
+      added(entry);
     });
 
     /* ---------- Mode "Manuel" ---------- */
 
     cfg.manualForm.addEventListener("submit", function (e) {
       e.preventDefault();
+      var kcal = parseNum(cfg.manualFields.kcal.value);
       var entry = {
         name: cfg.manualFields.name.value.trim(),
-        kcal: parseFloat(cfg.manualFields.kcal.value) || 0,
-        protein: parseFloat(cfg.manualFields.protein.value) || 0,
-        fat: parseFloat(cfg.manualFields.fat.value) || 0,
-        carbs: parseFloat(cfg.manualFields.carbs.value) || 0
+        kcal: isNaN(kcal) ? 0 : round(kcal),
+        protein: round1(parseNum(cfg.manualFields.protein.value) || 0),
+        fat: round1(parseNum(cfg.manualFields.fat.value) || 0),
+        carbs: round1(parseNum(cfg.manualFields.carbs.value) || 0)
       };
-      if (!entry.name) return;
+      if (!entry.name) { cfg.manualFields.name.focus(); return; }
+      if (isNaN(kcal)) { cfg.manualFields.kcal.focus(); return; }
 
       var dateKey = cfg.getDateKey();
       if (!dateKey) return;
 
-      if (cfg.photoCtrl) {
-        var photo = cfg.photoCtrl.getPhoto();
-        if (photo) entry.photo = photo;
-      }
+      var photo = cfg.photoCtrl.getPhoto();
+      if (photo) entry.photo = photo;
 
       // Échec = stockage plein (souvent la photo) : writeJSON a déjà
       // prévenu, on garde le formulaire rempli pour réessayer sans photo.
       if (!addFoodToDay(dateKey, entry)) return;
 
       cfg.manualForm.reset();
-      if (cfg.photoCtrl) cfg.photoCtrl.clear();
-      cfg.onAdded();
+      cfg.photoCtrl.clear();
+      added(entry);
     });
 
     /* ---------- Mode "Scanner" ---------- */
@@ -1756,14 +2171,14 @@
 
     function populateScanForm(data, barcode, sourceLabel, allowSaveToggle) {
       scan.nameInput.value = data.name;
-      scan.kcalInput.value = data.kcal;
-      scan.proteinInput.value = data.protein;
-      scan.fatInput.value = data.fat;
-      scan.carbsInput.value = data.carbs;
+      scan.kcalInput.value = fmtNum(data.kcal);
+      scan.proteinInput.value = fmtNum(data.protein);
+      scan.fatInput.value = fmtNum(data.fat);
+      scan.carbsInput.value = fmtNum(data.carbs);
       scan.gramsInput.value = "100";
       scan.form.setAttribute("data-barcode", barcode);
-      if (scan.barcodeLabelEl) scan.barcodeLabelEl.textContent = barcode;
-      if (scan.sourceChipEl) scan.sourceChipEl.textContent = sourceLabel;
+      scan.barcodeLabelEl.textContent = barcode;
+      scan.sourceChipEl.textContent = sourceLabel;
 
       if (allowSaveToggle) {
         scan.saveToDbCheckbox.checked = true;
@@ -1790,8 +2205,7 @@
     function handleBarcode(barcode) {
       resetScanPanel();
 
-      // 1) Ta propre base d'abord — reconnaissance instantanée, fonctionne
-      // même hors-ligne, aucun appel réseau nécessaire.
+      // 1) Ta propre base d'abord — instantané, même hors-ligne.
       var localMatch = findFoodByBarcode(loadFoods(), barcode);
       if (localMatch) {
         populateScanForm(localMatch, barcode, "⚡ Ta base", false);
@@ -1810,7 +2224,7 @@
           scan.notFoundEl.setAttribute("data-barcode", result.barcode);
           scan.notFoundMsgEl.textContent = result.networkError ?
             "Impossible de contacter Open Food Facts — vérifie ta connexion internet." :
-            "Produit introuvable dans Open Food Facts (code-barres : " + result.barcode + "). Ajoute-le une fois à ta base : il sera reconnu instantanément la prochaine fois, même hors-ligne.";
+            "Produit introuvable dans Open Food Facts (code : " + result.barcode + "). Ajoute-le une fois à ta base : il sera reconnu instantanément la prochaine fois, même hors-ligne.";
           return;
         }
 
@@ -1826,30 +2240,33 @@
     scan.useManualBtn.addEventListener("click", function () {
       resetScanPanel();
       cfg.modeManual.checked = true;
-      cfg.modeManual.dispatchEvent(new Event("change"));
+      showMode("manual");
     });
 
     scan.createFromNotFoundBtn.addEventListener("click", function () {
       var barcode = scan.notFoundEl.getAttribute("data-barcode") || "";
       scan.notFoundEl.hidden = true;
       populateScanForm({ name: "", kcal: 0, protein: 0, fat: 0, carbs: 0 }, barcode, "Nouveau produit", true);
-      scan.nameInput.value = "";
+      scan.kcalInput.value = "";
+      scan.proteinInput.value = "";
+      scan.fatInput.value = "";
+      scan.carbsInput.value = "";
       scan.incompleteEl.hidden = true;
     });
 
     scan.form.addEventListener("submit", function (e) {
       e.preventDefault();
-      var grams = parseFloat(scan.gramsInput.value) || 0;
-      if (grams <= 0) return;
+      var grams = parseNum(scan.gramsInput.value);
+      if (isNaN(grams) || grams <= 0) { scan.gramsInput.focus(); return; }
       var factor = grams / 100;
 
       var name = scan.nameInput.value.trim();
-      if (!name) return;
+      if (!name) { scan.nameInput.focus(); return; }
       var per100 = {
-        kcal: parseFloat(scan.kcalInput.value) || 0,
-        protein: parseFloat(scan.proteinInput.value) || 0,
-        fat: parseFloat(scan.fatInput.value) || 0,
-        carbs: parseFloat(scan.carbsInput.value) || 0
+        kcal: parseNum(scan.kcalInput.value) || 0,
+        protein: parseNum(scan.proteinInput.value) || 0,
+        fat: parseNum(scan.fatInput.value) || 0,
+        carbs: parseNum(scan.carbsInput.value) || 0
       };
       var barcodeVal = scan.form.getAttribute("data-barcode") || null;
 
@@ -1879,7 +2296,8 @@
       }
 
       resetScanPanel();
-      cfg.onAdded();
+      scan.gramsInput.blur();
+      added(entry);
     });
 
     /* ---------- Bascule entre les 3 modes ---------- */
@@ -1888,6 +2306,7 @@
       cfg.dbForm.hidden = mode !== "db";
       cfg.scanPanel.hidden = mode !== "scan";
       cfg.manualForm.hidden = mode !== "manual";
+      if (cfg.frequentContainer) cfg.frequentContainer.classList.toggle("is-off", mode !== "db");
       if (mode !== "db") hideSuggestions();
       if (mode !== "scan") resetScanPanel();
     }
@@ -1900,8 +2319,29 @@
   }
 
   /* ---------------------------------------------------------
-     Rendu — Suivi (jour courant)
+     Suivi — affiche UNE journée : aujourd'hui par défaut, ou
+     n'importe quel jour passé (flèches ‹ › ou depuis
+     l'historique). Remplace l'ancien écran "détail d'une journée"
+     qui dupliquait tout le formulaire.
      --------------------------------------------------------- */
+
+  // dateKey null = "aujourd'hui" : suit automatiquement le passage
+  // à minuit si l'appli reste ouverte.
+  var trackState = { dateKey: null };
+
+  function currentDayKey() { return trackState.dateKey || todayKey(); }
+
+  function setTrackDay(key) {
+    trackState.dateKey = (!key || key >= todayKey()) ? null : key;
+    refreshTracker();
+  }
+
+  function dayLabel(key) {
+    var today = todayKey();
+    if (key === today) return "Aujourd'hui";
+    if (key === dateKeyFromDate(addDays(parseDateKey(today), -1))) return "Hier";
+    return formatDateLong(key);
+  }
 
   function renderFoodListInto(listEl, emptyEl, entries, onDelete) {
     if (entries.length === 0) {
@@ -1914,15 +2354,15 @@
     var html = "";
     for (var i = entries.length - 1; i >= 0; i--) {
       var e = entries[i];
-      var qtyLabel = e.grams ? (e.grams + ' g · ') : '';
+      var qtyLabel = e.grams ? (fmtNum(e.grams) + ' g · ') : '';
       var thumb = e.photo ? '<img class="food-thumb" src="' + e.photo + '" alt="">' : '';
       html +=
         '<li class="food-item">' + thumb +
           '<span class="food-name">' + escapeHtml(e.name) +
-            '<span class="food-macros">' + qtyLabel + 'P ' + e.protein + 'g · L ' + e.fat + 'g · G ' + e.carbs + 'g</span>' +
+            '<span class="food-macros">' + qtyLabel + 'P ' + fmtNum(e.protein) + ' · L ' + fmtNum(e.fat) + ' · G ' + fmtNum(e.carbs) + '</span>' +
           '</span>' +
-          '<span class="food-kcal">' + e.kcal + '</span>' +
-          '<button type="button" class="food-del" data-id="' + e.id + '" aria-label="Supprimer">×</button>' +
+          '<span class="food-kcal">' + e.kcal + '<small> kcal</small></span>' +
+          '<button type="button" class="food-del" data-id="' + e.id + '" aria-label="Supprimer ' + escapeHtml(e.name) + '">×</button>' +
         '</li>';
     }
     listEl.innerHTML = html;
@@ -1935,6 +2375,14 @@
     }
   }
 
+  // Jour précédent qui a un journal (pour "Copier la veille").
+  function previousDayWithEntries(key) {
+    var history = loadHistory();
+    var prevKey = dateKeyFromDate(addDays(parseDateKey(key), -1));
+    var r = history[prevKey];
+    return (r && r.entries.length > 0) ? r : null;
+  }
+
   function refreshTracker() {
     var profile = readJSON(STORAGE_PROFILE);
     if (!profile) {
@@ -1945,75 +2393,102 @@
     $("noProfile").hidden = true;
     $("trackerContent").hidden = false;
 
-    var record = ensureTodayRecord();
-    var totals = sumEntries(record.entries);
+    var key = currentDayKey();
+    var isToday = key === todayKey();
+    // Aujourd'hui : la journée est créée tout de suite. Jour passé :
+    // seulement au premier ajout (pas de journées vides parasites).
+    var record = isToday ? ensureDayRecord(key) : getDayRecord(key);
+    var view = record || { date: key, entries: [], targets: profile.targets };
+    var totals = sumEntries(view.entries);
 
-    $("gaugesGrid").innerHTML = gaugesHtml(totals, effectiveTargetsFor(record), false);
-    renderFoodListInto($("foodLog"), $("logEmpty"), record.entries, function (id) {
-      removeFoodFromDay(record.date, id);
-      refreshTracker();
+    $("trackDate").textContent = dayLabel(key);
+    $("dayToday").hidden = isToday;
+    $("dayNext").disabled = isToday;
+
+    $("gaugesGrid").innerHTML = gaugesHtml(totals, effectiveTargetsFor(view), false);
+    renderFoodListInto($("foodLog"), $("logEmpty"), view.entries, function (id) {
+      withUndo([STORAGE_HISTORY], "Aliment supprimé", function () { removeFoodFromDay(key, id); }, refreshTracker);
     });
 
-    $("trackDate").textContent = formatDateLong(record.date);
-    $("validatedChip").hidden = !record.validated;
-    $("validateDay").hidden = record.validated;
-    $("saveAsFavorite").hidden = record.entries.length === 0;
+    var hasEntries = view.entries.length > 0;
+    $("resetDay").hidden = !hasEntries;
+    $("saveAsFavorite").hidden = !hasEntries || !isToday;
 
-    var dtVal = record.dayType || "neutral";
+    var prev = hasEntries ? null : previousDayWithEntries(key);
+    var copyBtn = $("copyPrevDay");
+    copyBtn.hidden = !prev;
+    if (prev) {
+      copyBtn.textContent = "↺ Copier le journal " + (isToday ? "d'hier" : "de la veille") + " (" + prev.entries.length + " aliment" + (prev.entries.length > 1 ? "s" : "") + ")";
+    }
+
+    var dtVal = view.dayType || "neutral";
     var dtId = dtVal === "rest" ? "dayTypeRest" : (dtVal === "training" ? "dayTypeTraining" : "dayTypeNeutral");
-    var dtInput = document.getElementById(dtId);
-    if (dtInput) dtInput.checked = true;
+    $(dtId).checked = true;
 
-    refreshHydrationUI(record, profile);
+    refreshHydrationUI(view, profile);
     renderFavoritesQuickAdd();
   }
 
   function handleResetDay() {
-    var confirmed = window.confirm("Réinitialiser le journal du jour ? Cette action est irréversible.");
-    if (!confirmed) return;
-    var record = ensureTodayRecord();
-    record.entries = [];
-    record.validated = false;
-    upsertDayRecord(record);
-    refreshTracker();
+    var key = currentDayKey();
+    withUndo([STORAGE_HISTORY], "Journal vidé", function () {
+      var history = loadHistory();
+      if (history[key]) {
+        history[key].entries = [];
+        saveHistory(history);
+      }
+    }, refreshTracker);
   }
 
-  function handleValidateDay() {
-    var record = ensureTodayRecord();
-    setDayValidated(record.date, true);
-    refreshTracker();
+  function handleCopyPrevDay() {
+    var key = currentDayKey();
+    var prev = previousDayWithEntries(key);
+    if (!prev) return;
+    withUndo([STORAGE_HISTORY], prev.entries.length + " aliment" + (prev.entries.length > 1 ? "s copiés" : " copié"), function () {
+      if (!ensureDayRecord(key)) return;
+      for (var i = 0; i < prev.entries.length; i++) {
+        var src = prev.entries[i];
+        // Photos non copiées : elles pèsent lourd dans le stockage.
+        addFoodToDay(key, { name: src.name, kcal: src.kcal, protein: src.protein, fat: src.fat, carbs: src.carbs, grams: src.grams || null, foodId: src.foodId || null });
+      }
+    }, refreshTracker);
   }
 
   /* ---------------------------------------------------------
-     Historique — état de navigation interne
+     Historique + Bilans
      --------------------------------------------------------- */
 
   var historyState = {
     mode: "list",
-    calendarCursor: new Date(),
-    currentDetailKey: null
+    calendarCursor: new Date()
   };
+
+  function daysWithEntries(history) {
+    return Object.keys(history).filter(function (k) { return history[k].entries.length > 0; });
+  }
 
   function refreshHistory() {
     var history = loadHistory();
-    var keys = Object.keys(history);
+    var hasData = daysWithEntries(history).length > 0;
+    var mode = historyState.mode;
 
-    $("historyEmpty").hidden = keys.length > 0;
-    $("historyBrowse").hidden = keys.length === 0;
+    $("historyEmpty").hidden = hasData;
+    $("historyListView").hidden = !hasData || mode !== "list";
+    $("historyCalendarView").hidden = mode !== "calendar";
+    $("statsContent").hidden = !hasData || mode !== "stats";
 
-    if ($("historyDetail").hidden === false) {
-      renderHistoryDetail(historyState.currentDetailKey);
-      return;
-    }
+    if (mode === "list" && hasData) renderHistoryList(history);
+    if (mode === "calendar") renderHistoryCalendar(history);
+    if (mode === "stats" && hasData) refreshStats();
+  }
 
-    if (keys.length === 0) return;
-
-    renderHistoryList(history);
-    renderHistoryCalendar(history);
+  function openDayInTracker(key) {
+    setTrackDay(key);
+    switchTab("track");
   }
 
   function renderHistoryList(history) {
-    var keys = Object.keys(history);
+    var keys = daysWithEntries(history);
     keys.sort();
     keys.reverse();
 
@@ -2022,18 +2497,18 @@
       var record = history[keys[i]];
       var totals = sumEntries(record.entries);
       var status = dayStatus(record);
-      var isToday = record.date === todayKey();
+      var target = effectiveTargetsFor(record);
 
       html +=
         '<li>' +
           '<button type="button" class="history-row" data-date="' + record.date + '">' +
             '<span class="status-dot st-' + status + '"></span>' +
-            '<span class="h-date">' + (isToday ? "Aujourd'hui" : formatDateShort(record.date)) +
+            '<span class="h-date">' + dayLabel(record.date) +
               '<span class="h-sub">' + record.entries.length + ' aliment' + (record.entries.length > 1 ? 's' : '') +
-                (record.validated ? ' · validée' : '') +
+                ' · P ' + round(totals.protein) + ' g' +
               '</span>' +
             '</span>' +
-            '<span class="h-kcal">' + round(totals.kcal) + ' / ' + round(record.targets.kcal) + ' kcal</span>' +
+            '<span class="h-kcal">' + round(totals.kcal) + ' / ' + round(target.kcal) + ' kcal</span>' +
           '</button>' +
         '</li>';
     }
@@ -2042,7 +2517,7 @@
     var rows = $("historyList").querySelectorAll(".history-row");
     for (var j = 0; j < rows.length; j++) {
       rows[j].addEventListener("click", function (ev) {
-        openHistoryDetail(ev.currentTarget.getAttribute("data-date"));
+        openDayInTracker(ev.currentTarget.getAttribute("data-date"));
       });
     }
   }
@@ -2053,10 +2528,9 @@
     var month = cursor.getMonth();
 
     var monthLabel = cursor.toLocaleDateString("fr-FR", { month: "long", year: "numeric" });
-    $("calLabel").textContent = monthLabel;
+    $("calLabel").textContent = monthLabel.charAt(0).toUpperCase() + monthLabel.slice(1);
 
-    var firstOfMonth = new Date(year, month, 1);
-    var firstWeekday = (firstOfMonth.getDay() + 6) % 7;
+    var firstWeekday = (new Date(year, month, 1).getDay() + 6) % 7;
     var daysInMonth = new Date(year, month + 1, 0).getDate();
     var today = todayKey();
 
@@ -2066,91 +2540,26 @@
     }
 
     for (var day = 1; day <= daysInMonth; day++) {
-      var d = new Date(year, month, day);
-      var key = dateKeyFromDate(d);
+      var key = dateKeyFromDate(new Date(year, month, day));
       var record = history[key];
-      var status = record ? dayStatus(record) : "none";
-      var hasData = !!record;
+      var hasData = !!(record && record.entries.length > 0);
+      var status = hasData ? dayStatus(record) : "none";
+      var isFuture = key > today;
       var classes = "cal-cell st-" + status + (hasData ? " has-data" : "") + (key === today ? " is-today" : "");
-      html += '<button type="button" class="' + classes + '" data-date="' + key + '"' + (hasData ? "" : " disabled") + '>' + day + '</button>';
+      // Un jour passé sans données reste cliquable : on peut le remplir après coup.
+      html += '<button type="button" class="' + classes + '" data-date="' + key + '"' + (isFuture ? " disabled" : "") + '>' + day + '</button>';
     }
     $("calendarGrid").innerHTML = html;
 
-    var cells = $("calendarGrid").querySelectorAll(".cal-cell.has-data");
+    $("calNext").disabled = year > new Date().getFullYear() || (year === new Date().getFullYear() && month >= new Date().getMonth());
+
+    var cells = $("calendarGrid").querySelectorAll("button.cal-cell:not([disabled])");
     for (var c = 0; c < cells.length; c++) {
       cells[c].addEventListener("click", function (ev) {
-        openHistoryDetail(ev.currentTarget.getAttribute("data-date"));
+        openDayInTracker(ev.currentTarget.getAttribute("data-date"));
       });
     }
   }
-
-  function switchHistoryView(mode) {
-    historyState.mode = mode;
-    $("historyListView").hidden = mode !== "list";
-    $("historyCalendarView").hidden = mode !== "calendar";
-  }
-
-  function openHistoryDetail(dateKey) {
-    historyState.currentDetailKey = dateKey;
-    $("historyBrowse").hidden = true;
-    $("historyEmpty").hidden = true;
-    $("historyDetail").hidden = false;
-    renderHistoryDetail(dateKey);
-  }
-
-  function closeHistoryDetail() {
-    historyState.currentDetailKey = null;
-    $("historyDetail").hidden = true;
-    refreshHistory();
-  }
-
-  function renderHistoryDetail(dateKey) {
-    var record = getDayRecord(dateKey);
-    if (!record) {
-      closeHistoryDetail();
-      return;
-    }
-
-    var totals = sumEntries(record.entries);
-
-    $("detailDate").textContent = formatDateLong(record.date);
-    $("detailValidatedChip").hidden = !record.validated;
-    $("detailGauges").innerHTML = gaugesHtml(totals, effectiveTargetsFor(record), false);
-
-    var dtVal = record.dayType || "neutral";
-    var dtId = dtVal === "rest" ? "detailDayTypeRest" : (dtVal === "training" ? "detailDayTypeTraining" : "detailDayTypeNeutral");
-    var dtInput = document.getElementById(dtId);
-    if (dtInput) dtInput.checked = true;
-
-    renderFoodListInto($("detailFoodLog"), $("detailLogEmpty"), record.entries, function (id) {
-      removeFoodFromDay(record.date, id);
-      renderHistoryDetail(dateKey);
-    });
-
-    $("detailValidate").textContent = record.validated ? "Retirer la validation" : "Valider cette journée";
-  }
-
-  function handleDetailValidateToggle() {
-    var dateKey = historyState.currentDetailKey;
-    if (!dateKey) return;
-    var record = getDayRecord(dateKey);
-    if (!record) return;
-    setDayValidated(dateKey, !record.validated);
-    renderHistoryDetail(dateKey);
-  }
-
-  function handleDetailDelete() {
-    var dateKey = historyState.currentDetailKey;
-    if (!dateKey) return;
-    var confirmed = window.confirm("Supprimer définitivement cette journée de l'historique ?");
-    if (!confirmed) return;
-    deleteDayRecord(dateKey);
-    closeHistoryDetail();
-  }
-
-  /* ---------------------------------------------------------
-     Bilans hebdomadaire / mensuel
-     --------------------------------------------------------- */
 
   function computePeriodStats(nDays) {
     var history = loadHistory();
@@ -2159,9 +2568,7 @@
     var successCount = 0;
 
     for (var i = 0; i < nDays; i++) {
-      var d = addDays(today, -i);
-      var key = dateKeyFromDate(d);
-      var record = history[key];
+      var record = history[dateKeyFromDate(addDays(today, -i))];
       if (record && record.entries.length > 0) {
         recordsWithData.push(record);
         if (dayStatus(record) === "green") successCount++;
@@ -2169,59 +2576,36 @@
     }
 
     var daysLogged = recordsWithData.length;
-    var regularityPct = nDays > 0 ? round((successCount / nDays) * 100) : 0;
-
-    if (daysLogged === 0) {
-      return {
-        daysLogged: 0,
-        totalDays: nDays,
-        successCount: 0,
-        regularityPct: 0,
-        avgConsumed: { kcal: 0, protein: 0, fat: 0, carbs: 0 },
-        avgTarget: { kcal: 0, protein: 0, fat: 0, carbs: 0 },
-        totalConsumed: { kcal: 0, protein: 0, fat: 0, carbs: 0 }
-      };
-    }
-
-    var sumConsumed = { kcal: 0, protein: 0, fat: 0, carbs: 0 };
-    var sumTarget = { kcal: 0, protein: 0, fat: 0, carbs: 0 };
-
-    for (var j = 0; j < recordsWithData.length; j++) {
-      var t = sumEntries(recordsWithData[j].entries);
-      sumConsumed.kcal += t.kcal;
-      sumConsumed.protein += t.protein;
-      sumConsumed.fat += t.fat;
-      sumConsumed.carbs += t.carbs;
-
-      var tg = effectiveTargetsFor(recordsWithData[j]);
-      sumTarget.kcal += tg.kcal;
-      sumTarget.protein += tg.protein;
-      sumTarget.fat += tg.fat;
-      sumTarget.carbs += tg.carbs;
-    }
-
-    var avgConsumed = {
-      kcal: sumConsumed.kcal / daysLogged,
-      protein: sumConsumed.protein / daysLogged,
-      fat: sumConsumed.fat / daysLogged,
-      carbs: sumConsumed.carbs / daysLogged
-    };
-    var avgTarget = {
-      kcal: sumTarget.kcal / daysLogged,
-      protein: sumTarget.protein / daysLogged,
-      fat: sumTarget.fat / daysLogged,
-      carbs: sumTarget.carbs / daysLogged
-    };
-
-    return {
+    var stats = {
       daysLogged: daysLogged,
       totalDays: nDays,
       successCount: successCount,
-      regularityPct: regularityPct,
-      avgConsumed: avgConsumed,
-      avgTarget: avgTarget,
-      totalConsumed: sumConsumed
+      regularityPct: nDays > 0 ? round((successCount / nDays) * 100) : 0
     };
+    if (daysLogged === 0) return stats;
+
+    var sumConsumed = { kcal: 0, protein: 0, fat: 0, carbs: 0 };
+    var sumTarget = { kcal: 0, protein: 0, fat: 0, carbs: 0 };
+    var macroKeys = ["kcal", "protein", "fat", "carbs"];
+
+    for (var j = 0; j < recordsWithData.length; j++) {
+      var t = sumEntries(recordsWithData[j].entries);
+      var tg = effectiveTargetsFor(recordsWithData[j]);
+      for (var m = 0; m < macroKeys.length; m++) {
+        sumConsumed[macroKeys[m]] += t[macroKeys[m]];
+        sumTarget[macroKeys[m]] += tg[macroKeys[m]];
+      }
+    }
+
+    stats.avgConsumed = {};
+    stats.avgTarget = {};
+    for (var k = 0; k < macroKeys.length; k++) {
+      stats.avgConsumed[macroKeys[k]] = sumConsumed[macroKeys[k]] / daysLogged;
+      stats.avgTarget[macroKeys[k]] = sumTarget[macroKeys[k]] / daysLogged;
+    }
+    stats.totalConsumed = sumConsumed;
+    stats.totalTarget = sumTarget;
+    return stats;
   }
 
   function regularityChipClass(pct) {
@@ -2235,7 +2619,7 @@
 
     var chip = $(prefix + "Regularity");
     chip.className = regularityChipClass(stats.regularityPct);
-    chip.textContent = stats.regularityPct + "% de régularité";
+    chip.textContent = stats.successCount + " j. dans la cible";
 
     if (stats.daysLogged === 0) {
       $(prefix + "Gauges").innerHTML = "";
@@ -2247,12 +2631,12 @@
 
     // La cible totale ne compte que les jours renseignés : comparer ce
     // qui a été mangé sur 4 jours à une cible de 7 jours fausserait tout.
-    var targetTotalLogged = stats.avgTarget.kcal * stats.daysLogged;
+    var balance = round(stats.totalConsumed.kcal - stats.totalTarget.kcal);
     var cells = [
-      { label: "Total kcal (jours renseignés)", value: round(stats.totalConsumed.kcal).toLocaleString("fr-FR") + " / " + round(targetTotalLogged).toLocaleString("fr-FR") },
-      { label: "Total protéines", value: round(stats.totalConsumed.protein) + " g" },
-      { label: "Moy. kcal / jour", value: round(stats.avgConsumed.kcal) + " kcal" },
-      { label: "Jours dans la cible", value: stats.successCount + " / " + stats.totalDays }
+      { label: "Moy. kcal / jour", value: round(stats.avgConsumed.kcal).toLocaleString("fr-FR") + " kcal" },
+      { label: "Moy. protéines / jour", value: round(stats.avgConsumed.protein) + " g" },
+      { label: "Écart cumulé à la cible", value: (balance > 0 ? "+" : "") + balance.toLocaleString("fr-FR") + " kcal" },
+      { label: "Régularité", value: stats.regularityPct + "\u00a0% des jours" }
     ];
     var html = "";
     for (var i = 0; i < cells.length; i++) {
@@ -2266,13 +2650,6 @@
   }
 
   function refreshStats() {
-    var history = loadHistory();
-    var hasAnyData = Object.keys(history).length > 0;
-
-    $("statsEmpty").hidden = hasAnyData;
-    $("statsContent").hidden = !hasAnyData;
-    if (!hasAnyData) return;
-
     renderStatsBlock("week", computePeriodStats(7));
     renderStatsBlock("month", computePeriodStats(30));
   }
@@ -2302,16 +2679,16 @@
     var html = "";
     for (var i = 0; i < foods.length; i++) {
       var f = foods[i];
-      var barcodeTag = f.barcode ? ' · 📷 ' + f.barcode : '';
+      var barcodeTag = f.barcode ? ' · 📷' : '';
       html +=
         '<li class="food-db-row">' +
           '<div class="fdb-info">' +
             '<span class="fdb-name">' + escapeHtml(f.name) + '</span>' +
-            '<span class="fdb-macros">' + f.kcal + ' kcal · P' + f.protein + ' L' + f.fat + ' G' + f.carbs + ' /100g' + barcodeTag + '</span>' +
+            '<span class="fdb-macros">' + f.kcal + ' kcal · P' + fmtNum(f.protein) + ' L' + fmtNum(f.fat) + ' G' + fmtNum(f.carbs) + ' /100g' + barcodeTag + '</span>' +
           '</div>' +
           '<div class="fdb-actions">' +
-            '<button type="button" class="icon-btn" data-edit="' + f.id + '" aria-label="Modifier">✎</button>' +
-            '<button type="button" class="icon-btn icon-danger" data-delete="' + f.id + '" aria-label="Supprimer">×</button>' +
+            '<button type="button" class="icon-btn" data-edit="' + f.id + '" aria-label="Modifier ' + escapeHtml(f.name) + '">✎</button>' +
+            '<button type="button" class="icon-btn icon-danger" data-delete="' + f.id + '" aria-label="Supprimer ' + escapeHtml(f.name) + '">×</button>' +
           '</div>' +
         '</li>';
     }
@@ -2327,10 +2704,8 @@
     for (var k = 0; k < delBtns.length; k++) {
       delBtns[k].addEventListener("click", function (ev) {
         var id = ev.currentTarget.getAttribute("data-delete");
-        var confirmed = window.confirm("Supprimer cet aliment de ta base ? Les entrées déjà enregistrées dans ton journal ne seront pas modifiées.");
-        if (!confirmed) return;
-        deleteFoodRecord(id);
-        refreshFoodsPanel();
+        // Les entrées déjà enregistrées dans le journal ne sont pas touchées.
+        withUndo([STORAGE_FOODS, STORAGE_USAGE], "Aliment retiré de ta base", function () { deleteFoodRecord(id); }, refreshFoodsPanel);
       });
     }
   }
@@ -2338,22 +2713,19 @@
   function openFoodEditForm(id) {
     var form = $("foodEditForm");
     if (id) {
-      var foods = loadFoods();
-      var food = findFoodById(foods, id);
+      var food = findFoodById(loadFoods(), id);
       if (!food) return;
       foodsEditState.editingId = id;
       $("foodEditTitle").textContent = "Modifier l'aliment";
-      $("editFoodId").value = id;
       $("editFoodName").value = food.name;
-      $("editFoodKcal").value = food.kcal;
-      $("editFoodProtein").value = food.protein;
-      $("editFoodFat").value = food.fat;
-      $("editFoodCarbs").value = food.carbs;
+      $("editFoodKcal").value = fmtNum(food.kcal);
+      $("editFoodProtein").value = fmtNum(food.protein);
+      $("editFoodFat").value = fmtNum(food.fat);
+      $("editFoodCarbs").value = fmtNum(food.carbs);
     } else {
       foodsEditState.editingId = null;
       $("foodEditTitle").textContent = "Nouvel aliment";
       form.reset();
-      $("editFoodId").value = "";
     }
     form.hidden = false;
     form.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -2369,57 +2741,65 @@
     e.preventDefault();
     var data = {
       name: $("editFoodName").value.trim(),
-      kcal: parseFloat($("editFoodKcal").value) || 0,
-      protein: parseFloat($("editFoodProtein").value) || 0,
-      fat: parseFloat($("editFoodFat").value) || 0,
-      carbs: parseFloat($("editFoodCarbs").value) || 0
+      kcal: round(parseNum($("editFoodKcal").value) || 0),
+      protein: round1(parseNum($("editFoodProtein").value) || 0),
+      fat: round1(parseNum($("editFoodFat").value) || 0),
+      carbs: round1(parseNum($("editFoodCarbs").value) || 0)
     };
     if (!data.name) return;
 
-    if (foodsEditState.editingId) {
-      updateFoodRecord(foodsEditState.editingId, data);
-    } else {
-      createFood(data);
-    }
+    var wasEditing = !!foodsEditState.editingId;
+    if (wasEditing) updateFoodRecord(foodsEditState.editingId, data);
+    else createFood(data);
 
     closeFoodEditForm();
     refreshFoodsPanel();
+    showToast(wasEditing ? "Aliment modifié" : "« " + data.name + " » ajouté à ta base");
   }
 
   /* ---------------------------------------------------------
-     Navigation par onglets
+     Navigation (barre du bas)
      --------------------------------------------------------- */
 
+  var TAB_PANELS = { track: "panel-track", history: "panel-history", weight: "panel-weight", foods: "panel-foods" };
+  var activeTab = "track";
+
+  function refreshActiveTab() {
+    if (activeTab === "track") refreshTracker();
+    if (activeTab === "history") refreshHistory();
+    if (activeTab === "weight") refreshWeightPanel();
+    if (activeTab === "foods") {
+      refreshFoodsPanel();
+      refreshFavoritesManage();
+      refreshBackupInfo();
+    }
+  }
+
   function switchTab(tabName) {
-    var tabs = document.querySelectorAll(".tab");
-    for (var i = 0; i < tabs.length; i++) {
-      var isActive = tabs[i].getAttribute("data-tab") === tabName;
-      tabs[i].classList.toggle("active", isActive);
-      tabs[i].setAttribute("aria-selected", isActive ? "true" : "false");
+    // Re-toucher "Aujourd'hui" quand on y est déjà ramène à aujourd'hui.
+    if (tabName === "track" && activeTab === "track" && trackState.dateKey) trackState.dateKey = null;
+
+    var items = document.querySelectorAll(".nav-item");
+    for (var i = 0; i < items.length; i++) {
+      var isActive = items[i].getAttribute("data-tab") === tabName;
+      items[i].classList.toggle("active", isActive);
+      if (isActive) items[i].setAttribute("aria-current", "page");
+      else items[i].removeAttribute("aria-current");
     }
 
-    var panels = { calc: "panel-calc", track: "panel-track", history: "panel-history", stats: "panel-stats", weight: "panel-weight", foods: "panel-foods" };
-    for (var key in panels) {
-      if (!panels.hasOwnProperty(key)) continue;
-      var panelEl = $(panels[key]);
+    for (var key in TAB_PANELS) {
+      if (!TAB_PANELS.hasOwnProperty(key)) continue;
+      var panelEl = $(TAB_PANELS[key]);
       var isTarget = key === tabName;
       panelEl.hidden = !isTarget;
       panelEl.classList.toggle("active", isTarget);
     }
 
-    if (tabName === "track") refreshTracker();
-    if (tabName === "history") {
-      $("historyDetail").hidden = true;
-      historyState.currentDetailKey = null;
-      refreshHistory();
-    }
-    if (tabName === "stats") refreshStats();
-    if (tabName === "weight") refreshWeightPanel();
-    if (tabName === "foods") {
-      closeFoodEditForm();
-      refreshFoodsPanel();
-      refreshFavoritesManage();
-    }
+    if (tabName === "foods" && activeTab !== "foods") closeFoodEditForm();
+    activeTab = tabName;
+    hideToast();
+    refreshActiveTab();
+    window.scrollTo(0, 0);
   }
 
   /* ---------------------------------------------------------
@@ -2429,13 +2809,15 @@
   function init() {
     migrateLegacyLog();
     loadFoods();
+    setupDialog();
+    setupToast();
 
     $("calcForm").addEventListener("submit", handleCalcSubmit);
     $("resetDay").addEventListener("click", handleResetDay);
-    $("validateDay").addEventListener("click", handleValidateDay);
+    $("copyPrevDay").addEventListener("click", handleCopyPrevDay);
     $("scannerClose").addEventListener("click", closeScanner);
 
-    var trackPhotoCtrl = setupPhotoCapture({
+    var photoCtrl = setupPhotoCapture({
       btn: $("foodPhotoBtn"),
       input: $("foodPhotoInput"),
       previewEl: $("foodPhotoPreview"),
@@ -2457,7 +2839,7 @@
       gramsInput: $("foodGrams"),
       dbSubmitBtn: $("dbAddSubmit"),
       manualFields: { name: $("foodName"), kcal: $("foodKcal"), protein: $("foodProtein"), fat: $("foodFat"), carbs: $("foodCarbs") },
-      photoCtrl: trackPhotoCtrl,
+      photoCtrl: photoCtrl,
       frequentContainer: $("frequentFoods"),
       frequentListEl: $("frequentFoodsList"),
       scan: {
@@ -2479,91 +2861,45 @@
         barcodeLabelEl: $("scanBarcodeLabel"),
         sourceChipEl: $("scanSourceChip")
       },
-      getDateKey: function () { var r = ensureTodayRecord(); return r ? r.date : null; },
+      getDateKey: function () { var r = ensureDayRecord(currentDayKey()); return r ? r.date : null; },
       onAdded: refreshTracker
     });
 
-    var detailPhotoCtrl = setupPhotoCapture({
-      btn: $("detailFoodPhotoBtn"),
-      input: $("detailFoodPhotoInput"),
-      previewEl: $("detailFoodPhotoPreview"),
-      imgEl: $("detailFoodPhotoImg"),
-      removeBtn: $("detailFoodPhotoRemove")
+    // Navigation entre les jours
+    $("dayPrev").addEventListener("click", function () {
+      setTrackDay(dateKeyFromDate(addDays(parseDateKey(currentDayKey()), -1)));
     });
+    $("dayNext").addEventListener("click", function () {
+      setTrackDay(dateKeyFromDate(addDays(parseDateKey(currentDayKey()), 1)));
+    });
+    $("dayToday").addEventListener("click", function () { setTrackDay(null); });
 
-    setupFoodEntryUI({
-      modeDb: $("detailAddModeDb"),
-      modeScan: $("detailAddModeScan"),
-      modeManual: $("detailAddModeManual"),
-      dbForm: $("detailDbAddForm"),
-      scanPanel: $("detailScanAddPanel"),
-      manualForm: $("detailFoodForm"),
-      searchInput: $("detailFoodSearch"),
-      suggestionsEl: $("detailFoodSuggestions"),
-      noMatchEl: $("detailFoodNoMatch"),
-      previewEl: $("detailFoodPreview"),
-      gramsInput: $("detailFoodGrams"),
-      dbSubmitBtn: $("detailDbAddSubmit"),
-      manualFields: { name: $("detailFoodName"), kcal: $("detailFoodKcal"), protein: $("detailFoodProtein"), fat: $("detailFoodFat"), carbs: $("detailFoodCarbs") },
-      photoCtrl: detailPhotoCtrl,
-      scan: {
-        openBtn: $("detailOpenScannerBtn"),
-        statusEl: $("detailScanStatus"),
-        notFoundEl: $("detailScanNotFound"),
-        notFoundMsgEl: $("detailScanNotFoundMsg"),
-        createFromNotFoundBtn: $("detailScanCreateFromScan"),
-        useManualBtn: $("detailScanUseManual"),
-        form: $("detailScanAddForm"),
-        nameInput: $("detailScanProductName"),
-        kcalInput: $("detailScanKcal"),
-        proteinInput: $("detailScanProtein"),
-        fatInput: $("detailScanFat"),
-        carbsInput: $("detailScanCarbs"),
-        gramsInput: $("detailScanGrams"),
-        saveToDbCheckbox: $("detailScanSaveToDb"),
-        incompleteEl: $("detailScanIncomplete"),
-        barcodeLabelEl: $("detailScanBarcodeLabel"),
-        sourceChipEl: $("detailScanSourceChip")
-      },
-      getDateKey: function () { return historyState.currentDetailKey; },
-      onAdded: function () { renderHistoryDetail(historyState.currentDetailKey); }
-    });
-
-    $("detailValidate").addEventListener("click", handleDetailValidateToggle);
-    $("detailDelete").addEventListener("click", handleDetailDelete);
-    $("detailBack").addEventListener("click", closeHistoryDetail);
-
-    $("dayTypeRest").addEventListener("change", function () {
-      var r = ensureTodayRecord(); if (r) { setDayType(r.date, "rest"); refreshTracker(); }
-    });
-    $("dayTypeNeutral").addEventListener("change", function () {
-      var r = ensureTodayRecord(); if (r) { setDayType(r.date, "neutral"); refreshTracker(); }
-    });
-    $("dayTypeTraining").addEventListener("change", function () {
-      var r = ensureTodayRecord(); if (r) { setDayType(r.date, "training"); refreshTracker(); }
-    });
-    $("detailDayTypeRest").addEventListener("change", function () {
-      if (historyState.currentDetailKey) { setDayType(historyState.currentDetailKey, "rest"); renderHistoryDetail(historyState.currentDetailKey); }
-    });
-    $("detailDayTypeNeutral").addEventListener("change", function () {
-      if (historyState.currentDetailKey) { setDayType(historyState.currentDetailKey, "neutral"); renderHistoryDetail(historyState.currentDetailKey); }
-    });
-    $("detailDayTypeTraining").addEventListener("change", function () {
-      if (historyState.currentDetailKey) { setDayType(historyState.currentDetailKey, "training"); renderHistoryDetail(historyState.currentDetailKey); }
+    var dayTypes = { dayTypeRest: "rest", dayTypeNeutral: "neutral", dayTypeTraining: "training" };
+    Object.keys(dayTypes).forEach(function (id) {
+      $(id).addEventListener("change", function () {
+        setDayType(currentDayKey(), dayTypes[id]);
+        refreshTracker();
+      });
     });
 
     $("hydrationPlus").addEventListener("click", function () {
-      var r = ensureTodayRecord(); if (r) { addWater(r.date, 250); refreshTracker(); }
+      var r = ensureDayRecord(currentDayKey()); if (r) { addWater(r.date, 250); refreshTracker(); }
     });
     $("hydrationMinus").addEventListener("click", function () {
-      var r = ensureTodayRecord(); if (r) { addWater(r.date, -250); refreshTracker(); }
+      var r = ensureDayRecord(currentDayKey()); if (r) { addWater(r.date, -250); refreshTracker(); }
     });
 
     $("saveAsFavorite").addEventListener("click", handleSaveAsFavorite);
     $("measurementsForm").addEventListener("submit", handleMeasurementsSubmit);
 
-    $("viewList").addEventListener("change", function () { switchHistoryView("list"); });
-    $("viewCalendar").addEventListener("change", function () { switchHistoryView("calendar"); });
+    // Historique : Liste / Calendrier / Bilans
+    var historyViews = { viewList: "list", viewCalendar: "calendar", viewStats: "stats" };
+    Object.keys(historyViews).forEach(function (id) {
+      $(id).addEventListener("change", function () {
+        historyState.mode = historyViews[id];
+        refreshHistory();
+      });
+    });
 
     $("calPrev").addEventListener("click", function () {
       historyState.calendarCursor = new Date(historyState.calendarCursor.getFullYear(), historyState.calendarCursor.getMonth() - 1, 1);
@@ -2580,7 +2916,8 @@
     $("foodsFilter").addEventListener("input", refreshFoodsPanel);
 
     $("weightForm").addEventListener("submit", handleWeightSubmit);
-    $("weightGoToCalc").addEventListener("click", function () { openSettings(); });
+    $("weightDate").addEventListener("change", syncWeightFormToDate);
+    $("weightGoToCalc").addEventListener("click", openSettings);
     $("profileWeightSyncBtn").addEventListener("click", handleProfileWeightSync);
 
     $("exportDataBtn").addEventListener("click", exportAllData);
@@ -2591,27 +2928,28 @@
       e.target.value = "";
     });
 
-    var tabs = document.querySelectorAll(".tab");
-    for (var i = 0; i < tabs.length; i++) {
-      tabs[i].addEventListener("click", function (ev) {
+    var navItems = document.querySelectorAll(".nav-item");
+    for (var i = 0; i < navItems.length; i++) {
+      navItems[i].addEventListener("click", function (ev) {
         switchTab(ev.currentTarget.getAttribute("data-tab"));
       });
     }
 
-    $("goToTracker").addEventListener("click", function () { switchTab("track"); });
-    $("goToCalcFromTrack").addEventListener("click", function () { openSettings(); });
-
     $("openSettingsBtn").addEventListener("click", openSettings);
-    $("openSettingsFromGoal").addEventListener("click", openSettings);
+    $("goToCalcFromTrack").addEventListener("click", openSettings);
     $("settingsClose").addEventListener("click", closeSettings);
-
-    loadExistingProfile();
-
-    // Une fois le profil configuré, l'écran d'accueil utile au quotidien
-    // est le Suivi, pas l'onglet Objectif (consulté une fois puis oublié).
-    if (readJSON(STORAGE_PROFILE)) {
+    $("goToTracker").addEventListener("click", function () {
+      closeSettings();
+      setTrackDay(null);
       switchTab("track");
-    }
+    });
+    $("tdeeUseBtn").addEventListener("click", handleTdeeUse);
+    $("tdeeResetBtn").addEventListener("click", handleTdeeReset);
+
+    switchTab("track");
+
+    // Premier lancement : on ouvre directement le profil.
+    if (!readJSON(STORAGE_PROFILE)) openSettings();
 
     // Demande au navigateur de ne pas effacer les données de l'appli
     // quand l'espace manque (accordé d'office aux PWA installées).
@@ -2623,19 +2961,14 @@
       window.addEventListener("load", function () {
         var swUrl = new URL("sw.js", document.baseURI).href;
         navigator.serviceWorker.register(swUrl).catch(function () {
-          // Échec silencieux : l'app reste utilisable en ligne.
+          // Échec silencieux : l'appli reste utilisable en ligne.
         });
       });
     }
 
+    // Retour sur l'appli (ex : le lendemain matin) : on rafraîchit.
     document.addEventListener("visibilitychange", function () {
-      if (document.visibilityState !== "visible") return;
-      var activeTab = document.querySelector(".tab.active");
-      if (!activeTab) return;
-      var name = activeTab.getAttribute("data-tab");
-      if (name === "track") refreshTracker();
-      if (name === "stats") refreshStats();
-      if (name === "weight") refreshWeightPanel();
+      if (document.visibilityState === "visible" && $("settingsOverlay").hidden) refreshActiveTab();
     });
   }
 

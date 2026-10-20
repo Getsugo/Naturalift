@@ -1,19 +1,23 @@
 /* =========================================================
    NaturaLift — Service Worker
-   IMPORTANT : incrémenter CACHE_NAME (naturalift-vN) et le paramètre
-   ?v=N sur style.css / app.js dans index.html à CHAQUE déploiement,
-   sinon les anciens fichiers restent servis depuis le cache.
+
+   Mise à jour : plus besoin de changer ?v=N dans index.html.
+   Le HTML, le CSS et le JS sont toujours redemandés au réseau
+   (en contournant le cache du navigateur) ; le cache ne sert
+   que hors-ligne. Change CACHE_NAME seulement si tu veux faire
+   le ménage dans les anciens caches (ex : après avoir renommé
+   ou supprimé un fichier).
    ========================================================= */
 
-var CACHE_NAME = "naturalift-v12";
+var CACHE_NAME = "naturalift-v13";
 
 // Chemins relatifs uniquement : indispensable pour un déploiement
 // GitHub Pages sous <username>.github.io/<repo>/.
 var APP_SHELL = [
   "./",
   "./index.html",
-  "./style.css?v=12",
-  "./app.js?v=12",
+  "./style.css",
+  "./app.js",
   "./manifest.json"
 ];
 
@@ -62,44 +66,42 @@ self.addEventListener("fetch", function (event) {
 
   var url = request.url;
 
-  // Requêtes externes (bibliothèque du scanner sur unpkg.com, API Open
-  // Food Facts) : elles ne font pas partie de l'app shell et nécessitent
-  // une connexion réseau de toute façon. On laisse le navigateur les
-  // gérer normalement, sans interception ni repli sur index.html — sinon
-  // un fetch JSON échoué en offline renverrait la page HTML par erreur.
+  // Requêtes externes (bibliothèque du scanner, API Open Food Facts) :
+  // on laisse le navigateur les gérer normalement — sinon un appel
+  // JSON échoué hors-ligne renverrait la page HTML par erreur.
   if (url.indexOf(self.location.origin) !== 0) {
     return;
   }
 
-  // Icônes / assets statiques : cache-first, ils ne changent jamais entre
-  // deux versions (nom de fichier stable).
+  // Icônes : cache d'abord, elles ne changent jamais.
   if (isStaticAsset(url)) {
     event.respondWith(
       caches.match(request).then(function (cached) {
         return cached || fetch(request).then(function (response) {
-          return caches.open(CACHE_NAME).then(function (cache) {
-            cache.put(request, response.clone());
-            return response;
-          });
+          var copy = response.clone();
+          caches.open(CACHE_NAME).then(function (cache) { cache.put(request, copy); });
+          return response;
         });
       })
     );
     return;
   }
 
-  // App shell (HTML / CSS / JS) : network-first pour toujours servir la
-  // dernière version publiée, avec repli sur le cache hors-ligne.
+  // HTML / CSS / JS : réseau d'abord ("no-cache" = le navigateur
+  // revérifie auprès de GitHub Pages au lieu de servir une vieille
+  // copie), avec repli sur le cache hors-ligne. Les paramètres
+  // d'URL sont ignorés pour retrouver la bonne copie en cache.
   event.respondWith(
-    fetch(request)
+    fetch(url, { cache: "no-cache", credentials: "same-origin" })
       .then(function (response) {
-        var responseClone = response.clone();
-        caches.open(CACHE_NAME).then(function (cache) {
-          cache.put(request, responseClone);
-        });
+        if (response && response.ok) {
+          var copy = response.clone();
+          caches.open(CACHE_NAME).then(function (cache) { cache.put(request, copy); });
+        }
         return response;
       })
       .catch(function () {
-        return caches.match(request).then(function (cached) {
+        return caches.match(request, { ignoreSearch: true }).then(function (cached) {
           return cached || caches.match("./index.html");
         });
       })
