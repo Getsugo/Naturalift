@@ -5,7 +5,7 @@ plugins {
 
 android {
     namespace 'fr.getsugo.naturalift'
-    compileSdk 35
+    compileSdk 36
 
     defaultConfig {
         applicationId 'fr.getsugo.naturalift'
