@@ -1,0 +1,9 @@
+# Copiés automatiquement depuis la racine du dépôt (voir .github/workflows/android.yml)
+app/src/main/assets/www/
+app/src/main/res/drawable/ic_launcher.png
+# Fichiers de construction
+.gradle/
+build/
+app/build/
+local.properties
+*.jks
