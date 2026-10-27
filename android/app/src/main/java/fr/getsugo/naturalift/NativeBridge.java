@@ -94,6 +94,102 @@ public class NativeBridge {
         return SleepScheduler.show(activity, wake, SleepScheduler.bedtimeFor(activity, wake));
     }
 
+    /* ---------- Résumé du jour (widget + rappels) ---------- */
+
+    @JavascriptInterface
+    public void setDaySummary(String json) {
+        ReminderScheduler.saveSummary(activity, json);
+        NaturaLiftWidget.updateAll(activity);
+    }
+
+    /* ---------- Rappels ---------- */
+
+    @JavascriptInterface
+    public String getReminders() {
+        return ReminderScheduler.load(activity).toString();
+    }
+
+    @JavascriptInterface
+    public void setReminders(String json) {
+        ReminderScheduler.save(activity, json);
+    }
+
+    /* ---------- Samsung Health (Health Connect) ---------- */
+
+    @JavascriptInterface
+    public String healthStatus() {
+        try {
+            return HealthBridge.status(activity);
+        } catch (Throwable t) {
+            return "unavailable";
+        }
+    }
+
+    @JavascriptInterface
+    public void requestHealth() {
+        activity.runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    if ("update_required".equals(healthStatus())) {
+                        activity.startActivity(HealthBridge.storeIntent());
+                    } else {
+                        activity.startActivityForResult(
+                            HealthBridge.permissionIntent(activity), MainActivity.RC_HEALTH);
+                    }
+                } catch (Exception ignored) { }
+            }
+        });
+    }
+
+    @JavascriptInterface
+    public void syncHealth() {
+        try {
+            HealthBridge.sync(activity, new HealthBridge.Callback() {
+                @Override
+                public void done(String json) {
+                    activity.sendHealth(json);
+                }
+            });
+        } catch (Throwable ignored) { }
+    }
+
+    /* ---------- Divers ---------- */
+
+    /** Numéro de version de l'appli installée (comparé aux versions publiées). */
+    @JavascriptInterface
+    public int getVersionCode() {
+        try {
+            return (int) activity.getPackageManager()
+                .getPackageInfo(activity.getPackageName(), 0).getLongVersionCode();
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+
+    /** Ouvre un lien du dépôt NaturaLift (mise à jour) dans le navigateur. */
+    @JavascriptInterface
+    public void openUrl(String url) {
+        if (url == null || !url.startsWith("https://github.com/Getsugo/Naturalift/")) return;
+        try {
+            activity.startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
+        } catch (Exception ignored) { }
+    }
+
+    /** Partage un texte (liste de courses) vers une autre appli. */
+    @JavascriptInterface
+    public boolean share(String text) {
+        try {
+            Intent send = new Intent(Intent.ACTION_SEND)
+                .setType("text/plain")
+                .putExtra(Intent.EXTRA_TEXT, text);
+            activity.startActivity(Intent.createChooser(send, "Partager la liste"));
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     /** Enregistre un fichier texte dans Téléchargements (sauvegarde JSON). */
     @JavascriptInterface
     public boolean saveFile(String name, String mime, String content) {

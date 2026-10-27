@@ -25,6 +25,8 @@ import android.widget.FrameLayout;
 import androidx.core.content.FileProvider;
 import androidx.webkit.WebViewAssetLoader;
 
+import org.json.JSONObject;
+
 import java.io.File;
 
 /**
@@ -41,6 +43,7 @@ public class MainActivity extends Activity {
     private static final int RC_FILE = 10;
     private static final int RC_CAMERA = 11;
     static final int RC_NOTIF = 12;
+    static final int RC_HEALTH = 13;
 
     private WebView web;
     private ValueCallback<Uri[]> fileCallback;
@@ -138,6 +141,7 @@ public class MainActivity extends Activity {
         web.addJavascriptInterface(new NativeBridge(this), "NaturaLiftNative");
 
         SleepScheduler.reschedule(this);
+        ReminderScheduler.scheduleAll(this);
 
         if (savedInstanceState != null) {
             web.restoreState(savedInstanceState);
@@ -181,6 +185,11 @@ public class MainActivity extends Activity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == RC_HEALTH) {
+            // Autorisations Samsung Health accordées (ou non) : la page relit l'état.
+            notifyWeb();
+            return;
+        }
         if (requestCode != RC_FILE || fileCallback == null) return;
         Uri[] result = null;
         if (resultCode == RESULT_OK) {
@@ -208,6 +217,18 @@ public class MainActivity extends Activity {
             SleepScheduler.reschedule(this);
             notifyWeb();
         }
+    }
+
+    /** Transmet à la page les données lues dans Health Connect. */
+    void sendHealth(final String json) {
+        if (web == null) return;
+        web.post(new Runnable() {
+            @Override
+            public void run() {
+                web.evaluateJavascript(
+                    "window.NaturaLiftHealth && window.NaturaLiftHealth(" + JSONObject.quote(json) + ");", null);
+            }
+        });
     }
 
     /** Prévient la page qu'un réglage natif a changé (permission, réveil…). */
