@@ -1,0 +1,59 @@
+# Construit l'appli Android (APK) à chaque envoi sur GitHub.
+# Le fichier se télécharge dans l'onglet « Actions » du dépôt → dernière exécution → « NaturaLift-apk ».
+name: Appli Android
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+
+      # La clé de signature vient des secrets du dépôt : sans la même clé,
+      # le téléphone refuserait d'installer les mises à jour.
+      - name: Préparer la clé de signature
+        env:
+          KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
+        run: |
+          if [ -z "$KEYSTORE_B64" ]; then
+            echo "::error::Secret KEYSTORE_B64 manquant (voir les instructions)."
+            exit 1
+          fi
+          echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/naturalift.jks"
+
+      # Une seule version du code : les fichiers du site (racine du dépôt)
+      # sont copiés dans l'APK au moment de la construction.
+      - name: Copier l'appli web dans le projet Android
+        run: |
+          mkdir -p android/app/src/main/assets/www android/app/src/main/res/drawable
+          cp index.html app.js style.css manifest.json html5-qrcode.min.js icon-*.png android/app/src/main/assets/www/
+          cp icon-192.png android/app/src/main/res/drawable/ic_launcher.png
+
+      - name: Construire l'APK
+        working-directory: android
+        env:
+          KEYSTORE_FILE: ${{ runner.temp }}/naturalift.jks
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          VERSION_CODE: ${{ github.run_number }}
+        run: gradle assembleRelease --no-daemon
+
+      - name: Renommer l'APK
+        run: cp android/app/build/outputs/apk/release/app-release.apk NaturaLift.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NaturaLift-apk
+          path: NaturaLift.apk
