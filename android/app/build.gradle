@@ -1,0 +1,54 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'fr.getsugo.naturalift'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'fr.getsugo.naturalift'
+        minSdk 29
+        targetSdk 35
+        // Numéro de version : passé par GitHub Actions (numéro du build), 1 en local.
+        versionCode((System.getenv('VERSION_CODE') ?: '1') as Integer)
+        versionName '1.' + (System.getenv('VERSION_CODE') ?: '0')
+    }
+
+    signingConfigs {
+        release {
+            // Clé fournie par les secrets GitHub (voir .github/workflows/android.yml).
+            def ks = System.getenv('KEYSTORE_FILE')
+            if (ks) {
+                storeFile file(ks)
+                storePassword System.getenv('KEYSTORE_PASSWORD')
+                keyAlias 'naturalift'
+                keyPassword System.getenv('KEYSTORE_PASSWORD')
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.release
+        }
+    }
+
+    lint {
+        // L'appli est construite automatiquement : un avertissement ne doit pas bloquer l'APK.
+        checkReleaseBuilds false
+        abortOnError false
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    implementation 'androidx.webkit:webkit:1.12.1'
+    implementation 'androidx.core:core:1.13.1'
+}
+
