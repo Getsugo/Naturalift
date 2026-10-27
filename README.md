@@ -14,6 +14,15 @@ Appli web (PWA) de nutrition pour la musculation naturelle : calcul des calories
 - **Annuler** : chaque suppression peut être annulée pendant quelques secondes.
 - **Sauvegarde** : export / import JSON de toutes les données, avec rappel si la dernière sauvegarde est ancienne.
 
+## Appli Android
+
+Le dossier `android/` contient une petite appli Android qui affiche NaturaLift et ajoute ce qu'une PWA ne peut pas faire :
+
+- **Rappel de coucher** : l'appli lit le prochain réveil de l'Horloge du téléphone, calcule l'heure de coucher (réveil − sommeil voulu − temps d'endormissement) et envoie une vraie notification avant.
+- **Sauvegarde** : l'export JSON est enregistré dans Téléchargements.
+
+Le code de l'appli web reste à la racine : il est copié dans l'APK à chaque construction. L'APK est construit automatiquement par GitHub Actions (`.github/workflows/android.yml`) et se télécharge dans l'onglet **Actions** du dépôt. Il faut deux secrets dans *Settings → Secrets and variables → Actions* : `KEYSTORE_B64` (la clé de signature en base64) et `KEYSTORE_PASSWORD`. Garde le fichier `naturalift.jks` en lieu sûr : sans lui, impossible de mettre l'appli à jour sur le téléphone.
+
 ## Technique
 
 - HTML, CSS et JavaScript « vanilla » : aucun framework, aucune installation, aucune étape de build.

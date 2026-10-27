@@ -57,6 +57,37 @@
     }
   };
 
+  // Niveau d'activité = métier (hors sport) + séances de sport.
+  // Facteurs du métier inspirés des niveaux d'activité physique (PAL) de la FAO/OMS ;
+  // une séance de musculation d'environ 1 h ≈ 250-300 kcal, soit ≈ +0,025 par séance hebdomadaire.
+  var JOB_FACTORS = { none: 1.25, assis: 1.35, debout: 1.5, actif: 1.6, physique: 1.8 };
+  var JOB_LABELS = {
+    none: "Sans emploi / études",
+    assis: "Travail assis",
+    debout: "Travail debout",
+    actif: "Travail debout en marchant",
+    physique: "Travail physique"
+  };
+  var SESSION_FACTOR = 0.025;
+  var ACTIVITY_MIN = 1.2;
+  var ACTIVITY_MAX = 2.2;
+
+  function activityFromJob(job, sessions) {
+    var base = JOB_FACTORS.hasOwnProperty(job) ? JOB_FACTORS[job] : JOB_FACTORS.debout;
+    var n = Math.max(0, Math.min(7, sessions || 0));
+    var value = base + n * SESSION_FACTOR;
+    return Math.round(Math.max(ACTIVITY_MIN, Math.min(ACTIVITY_MAX, value)) * 1000) / 1000;
+  }
+
+  // Ancien profil (sélecteur unique) : on devine le métier le plus proche.
+  function guessJobFromActivity(activity) {
+    if (activity >= 1.85) return { job: "physique", sessions: 3 };
+    if (activity >= 1.7) return { job: "actif", sessions: 4 };
+    if (activity >= 1.5) return { job: "debout", sessions: 3 };
+    if (activity >= 1.35) return { job: "assis", sessions: 2 };
+    return { job: "assis", sessions: 0 };
+  }
+
   var FAT_FLOOR_PER_KG = { H: 0.8, F: 0.95 };
   var KCAL_PER_G = { protein: 4, fat: 9, carbs: 4 };
 
@@ -1234,6 +1265,198 @@
      Sauvegarde — export / import de toutes les données locales
      --------------------------------------------------------- */
 
+  /* ---------------------------------------------------------
+     Sommeil : heure de coucher = réveil − sommeil voulu − endormissement.
+     Dans l'appli Android, le réveil est lu dans l'Horloge du téléphone
+     et une vraie notification prévient avant l'heure du coucher.
+     Dans le navigateur, on saisit l'heure de réveil à la main.
+     --------------------------------------------------------- */
+
+  var STORAGE_SLEEP = "nl_sleep_v1";
+  var SLEEP_DEFAULTS = { sleepMin: 450, latencyMin: 15, advanceMin: 30, wake: "07:00" };
+
+  function nativeApp() {
+    try {
+      return !!(window.NaturaLiftNative && window.NaturaLiftNative.isApp());
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function loadSleepSettings() {
+    var s = readJSON(STORAGE_SLEEP) || {};
+    var out = {
+      sleepMin: typeof s.sleepMin === "number" ? s.sleepMin : SLEEP_DEFAULTS.sleepMin,
+      latencyMin: typeof s.latencyMin === "number" ? s.latencyMin : SLEEP_DEFAULTS.latencyMin,
+      advanceMin: typeof s.advanceMin === "number" ? s.advanceMin : SLEEP_DEFAULTS.advanceMin,
+      wake: /^\d\d:\d\d$/.test(s.wake || "") ? s.wake : SLEEP_DEFAULTS.wake,
+      enabled: false,
+      notificationsAllowed: false
+    };
+    if (nativeApp()) {
+      try {
+        var n = JSON.parse(window.NaturaLiftNative.getSleepSettings());
+        out.sleepMin = n.sleepMin;
+        out.latencyMin = n.latencyMin;
+        out.advanceMin = n.advanceMin;
+        out.enabled = !!n.enabled;
+        out.notificationsAllowed = !!n.notificationsAllowed;
+      } catch (e) { /* on garde les valeurs locales */ }
+    }
+    return out;
+  }
+
+  function saveSleepSettings(s) {
+    writeJSON(STORAGE_SLEEP, { sleepMin: s.sleepMin, latencyMin: s.latencyMin, advanceMin: s.advanceMin, wake: s.wake });
+    if (nativeApp()) {
+      window.NaturaLiftNative.setSleepSettings(JSON.stringify({
+        enabled: s.enabled, sleepMin: s.sleepMin, latencyMin: s.latencyMin, advanceMin: s.advanceMin
+      }));
+    }
+  }
+
+  function hhmm(d) { return pad2(d.getHours()) + ":" + pad2(d.getMinutes()); }
+
+  function durationLabel(min) {
+    var h = Math.floor(min / 60);
+    var m = min % 60;
+    return h + " h" + (m ? " " + pad2(m) : "");
+  }
+
+  function dayWord(d) {
+    var today = new Date();
+    today.setHours(0, 0, 0, 0);
+    var that = new Date(d.getTime());
+    that.setHours(0, 0, 0, 0);
+    var diff = Math.round((that.getTime() - today.getTime()) / 86400000);
+    if (diff === 0) return "aujourd'hui";
+    if (diff === 1) return "demain";
+    return that.toLocaleDateString("fr-FR", { weekday: "long" });
+  }
+
+  // Prochain réveil : celui du téléphone (appli) ou l'heure saisie (navigateur),
+  // placée au prochain passage de cette heure.
+  function nextWakeDate(s) {
+    if (nativeApp()) {
+      var ms = window.NaturaLiftNative.getNextAlarm();
+      return ms > 0 ? new Date(ms) : null;
+    }
+    var parts = s.wake.split(":");
+    var d = new Date();
+    d.setHours(parseInt(parts[0], 10), parseInt(parts[1], 10), 0, 0);
+    if (d.getTime() <= Date.now()) d.setDate(d.getDate() + 1);
+    return d;
+  }
+
+  function renderSleep() {
+    if (!$("sleepCard")) return;
+    var app = nativeApp();
+    var s = loadSleepSettings();
+
+    $("sleepDuration").value = String(s.sleepMin);
+    $("sleepLatency").value = String(s.latencyMin);
+    $("sleepAdvance").value = String(s.advanceMin);
+    $("sleepWakeInput").value = s.wake;
+    $("sleepWakeField").hidden = app;
+    $("sleepAdvanceField").hidden = !app;
+    $("sleepAppActions").hidden = !app;
+
+    var note = $("sleepNote");
+    note.className = "sleep-note";
+    var status = $("sleepStatus");
+    var wake = nextWakeDate(s);
+
+    if (!wake) {
+      $("sleepWake").textContent = "—";
+      $("sleepBedtime").textContent = "—";
+      note.textContent = "Aucun réveil programmé dans l'Horloge du téléphone. Règle ton réveil, puis reviens ici.";
+    } else {
+      var bed = new Date(wake.getTime() - (s.sleepMin + s.latencyMin) * 60000);
+      $("sleepWake").textContent = hhmm(wake);
+      $("sleepBedtime").textContent = hhmm(bed);
+      var text = "Réveil " + dayWord(wake) + " à " + hhmm(wake) +
+        (app ? " (lu dans ton Horloge)" : "") + ". Pour dormir " + durationLabel(s.sleepMin) +
+        " avec " + s.latencyMin + " min pour t'endormir, sois au lit à " + hhmm(bed) + ".";
+      if (bed.getTime() <= Date.now()) {
+        text += " C'est déjà l'heure : file au lit !";
+        note.className = "sleep-note sleep-note-warn";
+      } else if (app && s.enabled && s.notificationsAllowed) {
+        var remind = new Date(bed.getTime() - s.advanceMin * 60000);
+        text += " Notification vers " + hhmm(remind) + ".";
+      }
+      note.textContent = text;
+    }
+
+    if (!app) {
+      status.textContent = "Calcul manuel";
+      status.className = "chip chip-muted";
+      if (wake) note.textContent += " Dans l'appli Android, ton réveil est lu tout seul et tu reçois une notification.";
+      return;
+    }
+
+    var toggle = $("sleepToggle");
+    if (s.enabled && !s.notificationsAllowed) {
+      status.textContent = "Notifications bloquées";
+      status.className = "chip";
+      toggle.textContent = "Autoriser les notifications";
+    } else if (s.enabled) {
+      status.textContent = "Rappel activé";
+      status.className = "chip";
+      toggle.textContent = "Désactiver le rappel";
+    } else {
+      status.textContent = "Rappel désactivé";
+      status.className = "chip chip-muted";
+      toggle.textContent = "Activer le rappel";
+    }
+  }
+
+  function readSleepForm() {
+    var s = loadSleepSettings();
+    s.sleepMin = parseInt($("sleepDuration").value, 10);
+    s.latencyMin = parseInt($("sleepLatency").value, 10);
+    s.advanceMin = parseInt($("sleepAdvance").value, 10);
+    if (/^\d\d:\d\d$/.test($("sleepWakeInput").value)) s.wake = $("sleepWakeInput").value;
+    return s;
+  }
+
+  function setupSleep() {
+    if (!$("sleepCard")) return;
+    var ids = ["sleepDuration", "sleepLatency", "sleepAdvance", "sleepWakeInput"];
+    ids.forEach(function (id) {
+      $(id).addEventListener("change", function () {
+        saveSleepSettings(readSleepForm());
+        renderSleep();
+      });
+    });
+
+    $("sleepToggle").addEventListener("click", function () {
+      var s = readSleepForm();
+      if (s.enabled && !s.notificationsAllowed) {
+        window.NaturaLiftNative.requestNotifications();
+        return;
+      }
+      s.enabled = !s.enabled;
+      saveSleepSettings(s);
+      if (s.enabled && !s.notificationsAllowed) window.NaturaLiftNative.requestNotifications();
+      showToast(s.enabled ? "Rappel de coucher activé" : "Rappel de coucher désactivé");
+      renderSleep();
+    });
+
+    $("sleepTest").addEventListener("click", function () {
+      if (!window.NaturaLiftNative.testNotification()) {
+        window.NaturaLiftNative.requestNotifications();
+      }
+    });
+
+    // L'appli Android prévient quand elle revient au premier plan
+    // ou quand une permission change.
+    window.addEventListener("naturalift-native", renderSleep);
+    document.addEventListener("visibilitychange", function () {
+      if (!document.hidden) renderSleep();
+    });
+    renderSleep();
+  }
+
   function exportAllData() {
     var payload = {
       app: "NaturaLift",
@@ -1247,11 +1470,25 @@
       favorites: readJSON(STORAGE_FAVORITES),
       usage: readJSON(STORAGE_USAGE)
     };
-    var blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    var json = JSON.stringify(payload, null, 2);
+    var fileName = "naturalift-sauvegarde-" + todayKey() + ".json";
+    // Appli Android : le téléchargement d'un « blob » n'existe pas dans la WebView,
+    // on passe par la fonction native qui écrit dans Téléchargements.
+    if (nativeApp()) {
+      if (window.NaturaLiftNative.saveFile(fileName, "application/json", json)) {
+        writeJSON(STORAGE_LAST_BACKUP, todayKey());
+        refreshBackupInfo();
+        uiAlert("Sauvegarde enregistrée dans Téléchargements : " + fileName);
+      } else {
+        uiAlert("La sauvegarde n'a pas pu être enregistrée.");
+      }
+      return;
+    }
+    var blob = new Blob([json], { type: "application/json" });
     var url = URL.createObjectURL(blob);
     var a = document.createElement("a");
     a.href = url;
-    a.download = "naturalift-sauvegarde-" + todayKey() + ".json";
+    a.download = fileName;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -1371,7 +1608,7 @@
 
     var p = data.profile;
     if (p && typeof p === "object" && (p.sex === "H" || p.sex === "F") && OBJECTIVE_CONFIG.hasOwnProperty(p.objective)) {
-      var activity = cleanNum(p.activity, 1.2, 1.9);
+      var activity = cleanNum(p.activity, ACTIVITY_MIN, ACTIVITY_MAX);
       var profile = {
         sex: p.sex,
         age: cleanNum(p.age, 14, 90),
@@ -1380,6 +1617,12 @@
         activity: activity === null ? 1.55 : activity,
         objective: p.objective
       };
+      if (JOB_FACTORS.hasOwnProperty(p.job)) {
+        var sess = cleanNum(p.sessions, 0, 7);
+        profile.job = p.job;
+        profile.sessions = sess === null ? 3 : round(sess);
+        profile.activity = activityFromJob(profile.job, profile.sessions);
+      }
       var tdee = cleanNum(p.tdeeOverride, 1200, 5500);
       if (tdee) profile.tdeeOverride = round(tdee);
       if (profile.age !== null && profile.weight !== null && profile.height !== null) {
@@ -2175,8 +2418,21 @@
     $("age").value = profile.age;
     $("weight").value = fmtNum(profile.weight);
     $("height").value = profile.height;
-    $("activity").value = profile.activity;
+    var guess = guessJobFromActivity(profile.activity);
+    $("job").value = JOB_FACTORS.hasOwnProperty(profile.job) ? profile.job : guess.job;
+    $("sessions").value = String(typeof profile.sessions === "number" ? profile.sessions : guess.sessions);
     $("objective").value = profile.objective;
+    updateActivityHint();
+  }
+
+  function updateActivityHint() {
+    var hint = $("activityHint");
+    if (!hint) return;
+    var job = $("job").value;
+    var sessions = parseInt($("sessions").value, 10) || 0;
+    var factor = activityFromJob(job, sessions);
+    hint.textContent = JOB_LABELS[job] + " + " + sessions + " séance" + (sessions > 1 ? "s" : "") +
+      " → coefficient d'activité " + fmtNum(factor);
   }
 
   function openSettings() {
@@ -2228,9 +2484,11 @@
       age: age,
       weight: round1(weight),
       height: height,
-      activity: parseFloat($("activity").value),
+      job: $("job").value,
+      sessions: parseInt($("sessions").value, 10) || 0,
       objective: $("objective").value
     };
+    profile.activity = activityFromJob(profile.job, profile.sessions);
     // La dépense réelle mesurée reste valable si on change d'objectif.
     if (previous && previous.tdeeOverride) profile.tdeeOverride = previous.tdeeOverride;
 
@@ -3335,6 +3593,10 @@
     setupToast();
 
     $("calcForm").addEventListener("submit", handleCalcSubmit);
+    $("job").addEventListener("change", updateActivityHint);
+    $("sessions").addEventListener("change", updateActivityHint);
+    updateActivityHint();
+    setupSleep();
     $("resetDay").addEventListener("click", handleResetDay);
     $("copyPrevDay").addEventListener("click", handleCopyPrevDay);
     $("scannerClose").addEventListener("click", closeScanner);
@@ -3496,7 +3758,8 @@
       navigator.storage.persist().catch(function () { /* non bloquant */ });
     }
 
-    if ("serviceWorker" in navigator) {
+    // Pas de service worker dans l'appli Android : les fichiers sont déjà dans l'APK.
+    if ("serviceWorker" in navigator && !nativeApp()) {
       window.addEventListener("load", function () {
         var swUrl = new URL("sw.js", document.baseURI).href;
         navigator.serviceWorker.register(swUrl).catch(function () {

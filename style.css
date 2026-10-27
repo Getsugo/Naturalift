@@ -2079,3 +2079,76 @@ body.no-scroll{ overflow: hidden; }
   border-color: transparent;
   min-height: 44px;
 }
+
+/* ---------------------------------------------------------
+   Sommeil : heure de coucher calculée depuis le réveil
+   --------------------------------------------------------- */
+.sleep-header{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.sleep-main{
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.sleep-cell{
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.sleep-cell-accent{ border-color: var(--lime-dim); }
+
+.sleep-cell-label{
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.sleep-cell-value{
+  font-family: var(--font-mono);
+  font-size: 1.45rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.sleep-cell-accent .sleep-cell-value{ color: var(--lime); }
+
+.sleep-arrow{ color: var(--text-muted); font-size: 1.1rem; }
+
+.sleep-note{
+  margin: 0 0 14px;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+.sleep-note-warn{ color: var(--amber); }
+
+.sleep-settings{
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+#sleepWakeField{ margin-bottom: 14px; }
+
+.sleep-actions{
+  display: flex;
+  gap: 10px;
+}
+
+.sleep-actions button{ flex: 1; width: auto; }

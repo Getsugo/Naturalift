@@ -209,6 +209,72 @@
           <button type="button" id="saveAsFavorite" class="btn-secondary save-favorite-btn" hidden>☆ Enregistrer ce journal comme repas favori</button>
         </div>
 
+        <div class="card sleep-card" id="sleepCard">
+          <div class="sleep-header">
+            <h2 class="card-title-sm">Sommeil</h2>
+            <span id="sleepStatus" class="chip chip-muted"></span>
+          </div>
+
+          <div class="sleep-main">
+            <div class="sleep-cell">
+              <span class="sleep-cell-label">Réveil</span>
+              <span id="sleepWake" class="sleep-cell-value">—</span>
+            </div>
+            <span class="sleep-arrow" aria-hidden="true">→</span>
+            <div class="sleep-cell sleep-cell-accent">
+              <span class="sleep-cell-label">Au lit à</span>
+              <span id="sleepBedtime" class="sleep-cell-value">—</span>
+            </div>
+          </div>
+          <p id="sleepNote" class="sleep-note"></p>
+
+          <div class="field" id="sleepWakeField" hidden>
+            <label for="sleepWakeInput">Heure de réveil demain</label>
+            <input type="time" id="sleepWakeInput" value="07:00">
+          </div>
+
+          <div class="sleep-settings">
+            <div class="field">
+              <label for="sleepDuration">Sommeil voulu</label>
+              <select id="sleepDuration">
+                <option value="390">6 h 30</option>
+                <option value="420">7 h</option>
+                <option value="450" selected>7 h 30</option>
+                <option value="480">8 h</option>
+                <option value="510">8 h 30</option>
+                <option value="540">9 h</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="sleepLatency">Pour t'endormir</label>
+              <select id="sleepLatency">
+                <option value="5">5 min</option>
+                <option value="10">10 min</option>
+                <option value="15" selected>15 min</option>
+                <option value="20">20 min</option>
+                <option value="30">30 min</option>
+                <option value="45">45 min</option>
+                <option value="60">1 h</option>
+              </select>
+            </div>
+            <div class="field field-wide" id="sleepAdvanceField" hidden>
+              <label for="sleepAdvance">Me prévenir</label>
+              <select id="sleepAdvance">
+                <option value="0">À l'heure du coucher</option>
+                <option value="15">15 min avant</option>
+                <option value="30" selected>30 min avant</option>
+                <option value="45">45 min avant</option>
+                <option value="60">1 h avant</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="sleep-actions" id="sleepAppActions" hidden>
+            <button type="button" id="sleepToggle" class="btn-primary">Activer le rappel</button>
+            <button type="button" id="sleepTest" class="btn-ghost">Tester la notification</button>
+          </div>
+        </div>
+
       </div>
 
     </section>
@@ -554,14 +620,29 @@
         </div>
 
         <div class="field field-wide">
-          <label for="activity">Niveau d'activité</label>
-          <select id="activity" name="activity">
-            <option value="1.2">Sédentaire — peu ou pas de sport</option>
-            <option value="1.375">Léger — 1 à 3 séances / semaine</option>
-            <option value="1.55" selected>Modéré — 3 à 5 séances / semaine</option>
-            <option value="1.725">Élevé — 6 à 7 séances / semaine</option>
-            <option value="1.9">Très élevé — sport intense quotidien / travail physique</option>
+          <label for="job">Ton travail (hors sport)</label>
+          <select id="job" name="job">
+            <option value="none">Sans emploi / études</option>
+            <option value="assis">Assis (bureau, conduite)</option>
+            <option value="debout" selected>Debout, peu de marche (caisse)</option>
+            <option value="actif">Marche toute la journée (vente)</option>
+            <option value="physique">Physique (charges, BTP)</option>
           </select>
+        </div>
+
+        <div class="field field-wide">
+          <label for="sessions">Séances de sport par semaine</label>
+          <select id="sessions" name="sessions">
+            <option value="0">0</option>
+            <option value="1">1</option>
+            <option value="2">2</option>
+            <option value="3" selected>3</option>
+            <option value="4">4</option>
+            <option value="5">5</option>
+            <option value="6">6</option>
+            <option value="7">7</option>
+          </select>
+          <p id="activityHint" class="kcal-source"></p>
         </div>
 
         <div class="field field-wide">
