@@ -817,6 +817,7 @@
   }
 
   function refreshWeightPanel() {
+    refreshNativeSummary();
     var weights = loadWeights();
     var dateInput = $("weightDate");
     dateInput.max = todayKey();
@@ -1361,6 +1362,25 @@
     $("sleepAdvanceField").hidden = !app;
     $("sleepAppActions").hidden = !app;
 
+    var night = $("sleepNight");
+    var todayRec = getDayRecord(todayKey());
+    var history = loadHistory();
+    var sum = 0, n = 0;
+    for (var i = 0; i < 7; i++) {
+      var hk = dateKeyFromDate(addDays(new Date(), -i));
+      if (history[hk] && history[hk].sleepMin) { sum += history[hk].sleepMin; n++; }
+    }
+    if (todayRec && todayRec.sleepMin) {
+      var short = todayRec.sleepMin < s.sleepMin - 30;
+      night.textContent = "Cette nuit : " + durationLabel(todayRec.sleepMin) + " (Samsung Health)" +
+        (n >= 3 ? " · moyenne 7 jours : " + durationLabel(round(sum / n)) : "") +
+        (short ? ". En dessous de ton objectif : ce soir, vise l'heure de coucher ci-dessus." : ".");
+      night.className = short ? "sleep-note sleep-note-warn" : "sleep-note";
+      night.hidden = false;
+    } else {
+      night.hidden = true;
+    }
+
     var note = $("sleepNote");
     note.className = "sleep-note";
     var status = $("sleepStatus");
@@ -1455,6 +1475,218 @@
       if (!document.hidden) renderSleep();
     });
     renderSleep();
+  }
+
+  /* ---------------------------------------------------------
+     Fonctions de l'appli Android (sans effet dans le navigateur) :
+     résumé pour le widget et les rappels, rappels, Samsung Health
+     (via Health Connect) et mises à jour.
+     --------------------------------------------------------- */
+
+  function nativeCall(fn) {
+    if (!nativeApp()) return null;
+    try { return fn(window.NaturaLiftNative); } catch (e) { return null; }
+  }
+
+  // Le widget et les rappels lisent ce résumé (calories et protéines restantes…).
+  function pushNativeSummary(view, totals, targets) {
+    if (!nativeApp()) return;
+    var weights = loadWeights();
+    var weighed = weights.length > 0 && weights[weights.length - 1].date === view.date;
+    nativeCall(function (n) {
+      n.setDaySummary(JSON.stringify({
+        date: view.date,
+        kcalTarget: round(targets.kcal),
+        protTarget: round(targets.protein),
+        kcalEaten: round(totals.kcal),
+        protEaten: round(totals.protein),
+        creatine: !!view.creatine,
+        weighed: weighed
+      }));
+    });
+  }
+
+  // Le résumé dépend aussi des pesées : on le renvoie après chaque changement.
+  function refreshNativeSummary() {
+    var profile = readJSON(STORAGE_PROFILE);
+    if (!profile || !nativeApp()) return;
+    var rec = ensureDayRecord(todayKey());
+    if (rec) pushNativeSummary(rec, sumEntries(rec.entries), effectiveTargetsFor(rec));
+  }
+
+  /* ----- Rappels ----- */
+
+  function renderRemindersBlock() {
+    var block = $("remindersBlock");
+    if (!nativeApp()) { block.hidden = true; return; }
+    var list = nativeCall(function (n) { return JSON.parse(n.getReminders()); }) || [];
+    block.hidden = list.length === 0;
+    var html = "";
+    for (var i = 0; i < list.length; i++) {
+      var r = list[i];
+      html +=
+        '<div class="reminder-row">' +
+          '<label class="checkbox-row reminder-check">' +
+            '<input type="checkbox" data-rem-on="' + escapeHtml(r.id) + '"' + (r.enabled ? ' checked' : '') + '>' +
+            '<span>' + escapeHtml(r.label) + '</span>' +
+          '</label>' +
+          '<input type="time" class="reminder-time" data-rem-time="' + escapeHtml(r.id) + '" value="' + pad2(r.hour) + ':' + pad2(r.minute) + '">' +
+        '</div>';
+    }
+    $("remindersList").innerHTML = html;
+
+    function save() {
+      var rows = $("remindersList").querySelectorAll("[data-rem-on]");
+      var out = [];
+      for (var j = 0; j < rows.length; j++) {
+        var id = rows[j].getAttribute("data-rem-on");
+        var timeEl = $("remindersList").querySelector('[data-rem-time="' + id + '"]');
+        var parts = (timeEl.value || "08:00").split(":");
+        out.push({ id: id, enabled: rows[j].checked, hour: parseInt(parts[0], 10) || 0, minute: parseInt(parts[1], 10) || 0 });
+      }
+      nativeCall(function (n) { n.setReminders(JSON.stringify(out)); });
+      var anyOn = out.some(function (r) { return r.enabled; });
+      var allowed = nativeCall(function (n) { return JSON.parse(n.getSleepSettings()).notificationsAllowed; });
+      if (anyOn && !allowed) nativeCall(function (n) { n.requestNotifications(); });
+      showToast("Rappels enregistrés");
+    }
+    var inputs = $("remindersList").querySelectorAll("input");
+    for (var k = 0; k < inputs.length; k++) inputs[k].addEventListener("change", save);
+  }
+
+  /* ----- Samsung Health (Health Connect) ----- */
+
+  var HEALTH_SYNC_MIN_INTERVAL = 10 * 60 * 1000;
+  var healthState = { lastSync: 0, last: null };
+  var KCAL_PER_STEP_PER_KG = 0.0004; // ≈ 0,03 kcal par pas pour 80 kg (marche)
+
+  function healthStatus() {
+    return nativeCall(function (n) { return n.healthStatus(); }) || "unavailable";
+  }
+
+  function renderHealthBlock(profile) {
+    var block = $("healthBlock");
+    if (!nativeApp()) { block.hidden = true; return; }
+    block.hidden = false;
+    var status = healthStatus();
+    var text = $("healthText");
+    var btn = $("healthBtn");
+    $("stepsAdjust").checked = profile.stepsAdjust !== false;
+    $("stepsAdjustRow").hidden = status !== "ok";
+    btn.hidden = status === "ok" || status === "unavailable";
+
+    if (status === "unavailable") {
+      text.textContent = "Health Connect n'est pas disponible sur ce téléphone.";
+    } else if (status === "update_required") {
+      text.textContent = "Health Connect doit être installé ou mis à jour depuis le Play Store.";
+      btn.textContent = "Installer Health Connect";
+    } else if (status === "no_permission") {
+      text.textContent = "Lis ton sommeil, tes pas et tes séances depuis Samsung Health et ton bracelet. Dans Samsung Health, active d'abord : Réglages → Health Connect → autoriser la lecture.";
+      btn.textContent = "Connecter Samsung Health";
+    } else {
+      var d = healthState.last;
+      var parts = ["Connecté."];
+      if (d && d.sleepMin) parts.push("Cette nuit : " + durationLabel(d.sleepMin) + ".");
+      if (d && d.steps && d.steps[todayKey()] !== undefined) parts.push("Aujourd'hui : " + d.steps[todayKey()].toLocaleString("fr-FR") + " pas.");
+      if (d && !d.sleepMin && !(d.steps && d.steps[todayKey()])) parts.push("Aucune donnée pour l'instant : vérifie que Samsung Health partage bien avec Health Connect.");
+      text.textContent = parts.join(" ");
+    }
+  }
+
+  function syncHealth(force) {
+    if (!nativeApp() || healthStatus() !== "ok") return;
+    var now = Date.now();
+    if (!force && now - healthState.lastSync < HEALTH_SYNC_MIN_INTERVAL) return;
+    healthState.lastSync = now;
+    nativeCall(function (n) { n.syncHealth(); });
+  }
+
+  // Moyenne des pas des 14 jours précédents (référence « journée habituelle »).
+  function stepsBaseline(steps, today) {
+    var sum = 0, n = 0;
+    for (var i = 1; i <= 14; i++) {
+      var k = dateKeyFromDate(addDays(parseDateKey(today), -i));
+      if (steps[k] > 500) { sum += steps[k]; n++; }
+    }
+    return n >= 5 ? sum / n : null;
+  }
+
+  // Appelée par l'appli Android quand les données Health Connect arrivent.
+  window.NaturaLiftHealth = function (json) {
+    var data;
+    try { data = typeof json === "string" ? JSON.parse(json) : json; } catch (e) { return; }
+    if (!data || !data.ok) return;
+    healthState.last = data;
+    var profile = readJSON(STORAGE_PROFILE);
+    if (!profile) return;
+    var today = todayKey();
+    if (!ensureDayRecord(today)) return;
+
+    var history = loadHistory();
+    var steps = data.steps || {};
+    for (var k in steps) {
+      if (steps.hasOwnProperty(k) && history[k] && DATE_RE.test(k)) history[k].steps = round(steps[k]);
+    }
+    var rec = history[today];
+    if (data.sleepMin) rec.sleepMin = round(data.sleepMin);
+
+    var base = stepsBaseline(steps, today);
+    if (profile.stepsAdjust !== false && base && steps[today] > base) {
+      var bonus = (steps[today] - base) * KCAL_PER_STEP_PER_KG * profile.weight;
+      rec.stepsBonus = Math.min(600, Math.round(bonus / 10) * 10);
+      if (rec.stepsBonus < 50) delete rec.stepsBonus;
+    } else {
+      delete rec.stepsBonus;
+    }
+
+    // Une séance enregistrée aujourd'hui → journée « Entraînement », sauf choix manuel.
+    if (data.exerciseToday && !rec.dayTypeManual && rec.dayType !== "training") {
+      rec.dayType = "training";
+      rec.dayTypeAuto = true;
+    }
+    saveHistory(history);
+    if (activeTab === "track") refreshTracker();
+    renderSleep();
+    if (!$("settingsOverlay").hidden) renderHealthBlock(profile);
+  };
+
+  /* ----- Mises à jour de l'appli Android ----- */
+
+  var UPDATE_CHECK_KEY = "nl_update_check_v1";
+  var RELEASES_API = "https://api.github.com/repos/Getsugo/Naturalift/releases/latest";
+
+  function checkForUpdate() {
+    if (!nativeApp() || !window.fetch) return;
+    var current = nativeCall(function (n) { return n.getVersionCode(); });
+    if (!current) return;
+    var last = readJSON(UPDATE_CHECK_KEY);
+    var now = Date.now();
+    if (last && last.at && now - last.at < 6 * 3600 * 1000) {
+      showUpdateBanner(last, current);
+      return;
+    }
+    fetch(RELEASES_API, { headers: { "Accept": "application/vnd.github+json" } })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (rel) {
+        if (!rel || !rel.tag_name) return;
+        var version = parseInt(String(rel.tag_name).replace(/\D/g, ""), 10);
+        var asset = (rel.assets || []).filter(function (a) { return /\.apk$/i.test(a.name); })[0];
+        var info = { at: now, version: version || 0, url: asset ? asset.browser_download_url : null };
+        writeJSON(UPDATE_CHECK_KEY, info);
+        showUpdateBanner(info, current);
+      })
+      .catch(function () { /* hors ligne : on réessaiera plus tard */ });
+  }
+
+  function showUpdateBanner(info, current) {
+    var show = !!(info && info.url && info.version > current &&
+      /^https:\/\/github\.com\/Getsugo\/Naturalift\/releases\/download\//.test(info.url));
+    $("updateBanner").hidden = !show;
+    if (!show) return;
+    $("updateText").textContent = "Nouvelle version de NaturaLift disponible (v" + info.version + "). Télécharge-la, puis ouvre le fichier pour l'installer : tes données sont gardées.";
+    $("updateBtn").onclick = function () {
+      nativeCall(function (n) { n.openUrl(info.url); });
+    };
   }
 
   function exportAllData() {
@@ -1625,6 +1857,12 @@
       }
       var tdee = cleanNum(p.tdeeOverride, 1200, 5500);
       if (tdee) profile.tdeeOverride = round(tdee);
+      if (p.ramp && typeof p.ramp === "object" && DATE_RE.test(p.ramp.startDate || "")) {
+        var rStart = cleanNum(p.ramp.startKcal, 800, 5000);
+        var rStep = cleanNum(p.ramp.stepKcal, 100, 600);
+        if (rStart && rStep) profile.ramp = { enabled: !!p.ramp.enabled, startKcal: round(rStart), stepKcal: round(rStep), startDate: p.ramp.startDate };
+      }
+      if (typeof p.stepsAdjust === "boolean") profile.stepsAdjust = p.stepsAdjust;
       if (profile.age !== null && profile.weight !== null && profile.height !== null) {
         // Les cibles sont recalculées, jamais reprises du fichier.
         profile.targets = computeTargets(profile);
@@ -1643,6 +1881,14 @@
         if (r.dayType === "training" || r.dayType === "rest") rec.dayType = r.dayType;
         var water = cleanNum(r.waterMl, 0, 20000);
         if (water) rec.waterMl = water;
+        if (r.creatine === true) rec.creatine = true;
+        var steps = cleanNum(r.steps, 0, 200000);
+        if (steps !== null) rec.steps = round(steps);
+        var sleepMin = cleanNum(r.sleepMin, 0, 1440);
+        if (sleepMin !== null) rec.sleepMin = round(sleepMin);
+        var bonus = cleanNum(r.stepsBonus, 0, 1000);
+        if (bonus) rec.stepsBonus = round(bonus);
+        if (r.dayTypeAuto === true) rec.dayTypeAuto = true;
         history[key] = rec;
       }
       out.history = history;
@@ -2008,6 +2254,58 @@
     return record;
   }
 
+  /* ---------------------------------------------------------
+     Montée progressive : quand on mange beaucoup moins que la cible,
+     on y arrive par paliers (ex. +300 kcal par semaine) plutôt que
+     d'un coup. Les protéines restent la priorité : elles gardent
+     leur cible, les lipides gardent leur minimum, et ce sont les
+     glucides qui suivent le palier.
+     --------------------------------------------------------- */
+
+  var RAMP_STEPS = [200, 300, 400];
+
+  function daysBetween(fromKey, toKey) {
+    return Math.round((parseDateKey(toKey).getTime() - parseDateKey(fromKey).getTime()) / 86400000);
+  }
+
+  // Palier du jour, ou null si la montée est finie ou désactivée.
+  function rampInfo(profile, dateKey) {
+    var r = profile && profile.ramp;
+    if (!r || !r.enabled || !profile.targets || !DATE_RE.test(r.startDate || "")) return null;
+    var days = Math.max(0, daysBetween(r.startDate, dateKey));
+    var week = Math.floor(days / 7);
+    var kcal = r.startKcal + r.stepKcal * week;
+    var final = profile.targets.kcal;
+    if (kcal >= final) return null;
+    var weeksLeft = Math.ceil((final - kcal) / r.stepKcal);
+    return { kcal: round(kcal), week: week + 1, weeksLeft: weeksLeft, final: final };
+  }
+
+  // Cibles d'une journée : celles du profil, ramenées au palier si besoin.
+  function targetsForDay(profile, dateKey) {
+    var t = profile.targets;
+    var info = rampInfo(profile, dateKey);
+    if (!info) return t;
+    var fatFloor = round(FAT_FLOOR_PER_KG[profile.sex] * profile.weight);
+    var fat = Math.min(t.fat, fatFloor);
+    var carbs = Math.max(0, round((info.kcal - t.protein * KCAL_PER_G.protein - fat * KCAL_PER_G.fat) / KCAL_PER_G.carbs));
+    var kcal = round(t.protein * KCAL_PER_G.protein + fat * KCAL_PER_G.fat + carbs * KCAL_PER_G.carbs);
+    return { kcal: kcal, protein: t.protein, fat: fat, carbs: carbs, ramp: info.week };
+  }
+
+  // Moyenne des calories des derniers jours notés (pour proposer un palier de départ).
+  function recentAverageIntake(nDays) {
+    var history = loadHistory();
+    var today = todayKey();
+    var sum = 0, n = 0;
+    for (var i = 1; i <= nDays; i++) {
+      var key = dateKeyFromDate(addDays(parseDateKey(today), -i));
+      var r = history[key];
+      if (r && r.entries.length) { sum += sumEntries(r.entries).kcal; n++; }
+    }
+    return n >= 3 ? round(sum / n) : null;
+  }
+
   // Crée la journée si besoin, avec les cibles actuelles du profil.
   function ensureDayRecord(dateKey) {
     var profile = readJSON(STORAGE_PROFILE);
@@ -2016,7 +2314,7 @@
     var history = loadHistory();
     var record = history[dateKey];
     if (!record) {
-      record = { date: dateKey, entries: [], targets: profile.targets };
+      record = { date: dateKey, entries: [], targets: targetsForDay(profile, dateKey) };
       history[dateKey] = record;
       if (!saveHistory(history)) return null;
     }
@@ -2116,6 +2414,9 @@
     var history = loadHistory();
     var record = history[dateKey];
     record.dayType = (type === "neutral") ? null : type;
+    // Choix fait à la main : Samsung Health ne le remplace plus.
+    record.dayTypeManual = true;
+    delete record.dayTypeAuto;
     saveHistory(history);
     return record;
   }
@@ -2124,10 +2425,12 @@
     var base = record && record.targets;
     if (!base) return base;
     var type = record.dayType;
-    if (type !== "training" && type !== "rest") return base;
+    // Pas en plus que d'habitude (Samsung Health) : énergie ajoutée en glucides.
+    var bonusCarbs = record.stepsBonus ? record.stepsBonus / KCAL_PER_G.carbs : 0;
+    if (type !== "training" && type !== "rest" && !bonusCarbs) return base;
 
-    var carbFactor = type === "training" ? 1.15 : 0.85;
-    var carbsAdjusted = Math.max(0, base.carbs * carbFactor);
+    var carbFactor = type === "training" ? 1.15 : (type === "rest" ? 0.85 : 1);
+    var carbsAdjusted = Math.max(0, base.carbs * carbFactor + bonusCarbs);
     var kcalDelta = (carbsAdjusted - base.carbs) * KCAL_PER_G.carbs;
 
     return {
@@ -2355,7 +2658,7 @@
 
     var todayRecord = getDayRecord(todayKey());
     if (todayRecord) {
-      todayRecord.targets = targets;
+      todayRecord.targets = targetsForDay(profile, todayKey());
       upsertDayRecord(todayRecord);
     }
     return targets;
@@ -2410,6 +2713,63 @@
     $("femaleNote").hidden = profile.sex !== "F";
     $("results").hidden = false;
     renderTdeeCard(profile);
+    renderRampBlock(profile);
+    renderHealthBlock(profile);
+    renderRemindersBlock();
+  }
+
+  function rampMinStart(profile) {
+    return Math.max(1500, Math.round((profile.targets.kcal - 1000) / 50) * 50);
+  }
+
+  function renderRampBlock(profile) {
+    var r = profile.ramp || {};
+    $("rampEnabled").checked = !!r.enabled;
+    $("rampFields").hidden = !r.enabled;
+    var suggested = recentAverageIntake(7);
+    $("rampStart").value = r.startKcal || (suggested ? Math.max(suggested, rampMinStart(profile)) : "");
+    $("rampStep").value = String(r.stepKcal || 300);
+
+    var status = $("rampStatus");
+    if (!r.enabled) {
+      status.textContent = suggested && suggested < profile.targets.kcal - 400
+        ? "Tu as mangé en moyenne " + suggested.toLocaleString("fr-FR") + " kcal ces derniers jours : la montée progressive est conseillée."
+        : "";
+      return;
+    }
+    var info = rampInfo(profile, todayKey());
+    if (!info) {
+      status.textContent = "Montée terminée : tu es à ta cible de " + profile.targets.kcal.toLocaleString("fr-FR") + " kcal.";
+      return;
+    }
+    status.textContent = "Semaine " + info.week + " : " + info.kcal.toLocaleString("fr-FR") + " kcal par jour. Cible de " +
+      info.final.toLocaleString("fr-FR") + " kcal atteinte dans " + info.weeksLeft + " semaine" + (info.weeksLeft > 1 ? "s" : "") + ".";
+  }
+
+  function saveRampFromForm() {
+    var profile = readJSON(STORAGE_PROFILE);
+    if (!profile) return;
+    var enabled = $("rampEnabled").checked;
+    var start = parseInt($("rampStart").value, 10);
+    var step = parseInt($("rampStep").value, 10);
+    if (RAMP_STEPS.indexOf(step) < 0) step = 300;
+    if (enabled && (isNaN(start) || start < 800 || start > 5000)) {
+      start = recentAverageIntake(7) || rampMinStart(profile);
+    }
+    // Un écart de plus de 1000 kcal avec ta dépense n'est pas un bon point de
+    // départ : on commence au plus à 1000 kcal sous la cible.
+    if (enabled && !isNaN(start)) start = Math.max(start, rampMinStart(profile));
+    var prev = profile.ramp || {};
+    // Changer le point de départ relance la montée à partir d'aujourd'hui.
+    var restart = !prev.enabled || prev.startKcal !== start || prev.stepKcal !== step;
+    profile.ramp = {
+      enabled: enabled,
+      startKcal: isNaN(start) ? (prev.startKcal || 1500) : start,
+      stepKcal: step,
+      startDate: restart || !prev.startDate ? todayKey() : prev.startDate
+    };
+    applyProfile(profile);
+    renderResults(profile.targets, profile);
   }
 
   function fillProfileForm(profile) {
@@ -2491,6 +2851,8 @@
     profile.activity = activityFromJob(profile.job, profile.sessions);
     // La dépense réelle mesurée reste valable si on change d'objectif.
     if (previous && previous.tdeeOverride) profile.tdeeOverride = previous.tdeeOverride;
+    if (previous && previous.ramp) profile.ramp = previous.ramp;
+    if (previous && previous.stepsAdjust !== undefined) profile.stepsAdjust = previous.stepsAdjust;
 
     var targets = applyProfile(profile);
     $("welcomeNote").hidden = true;
@@ -3161,7 +3523,11 @@
     $("dayToday").hidden = isToday;
     $("dayNext").disabled = isToday;
 
-    $("gaugesGrid").innerHTML = gaugesHtml(totals, effectiveTargetsFor(view), false);
+    var dayTargets = effectiveTargetsFor(view);
+    $("gaugesGrid").innerHTML = gaugesHtml(totals, dayTargets, false);
+    renderSummary(view, totals, dayTargets, isToday);
+    renderCreatine(view);
+    if (isToday) pushNativeSummary(view, totals, dayTargets);
     renderFoodListInto($("foodLog"), $("logEmpty"), view.entries, function (id) {
       openEntryEditor(key, id);
     }, function (id) {
@@ -3185,6 +3551,189 @@
 
     refreshHydrationUI(view, profile);
     renderFavoritesQuickAdd();
+  }
+
+  /* ---------------------------------------------------------
+     Résumé du jour + « Il te manque… »
+     Une phrase claire en haut, puis des aliments de TA base (les plus
+     utilisés d'abord) avec la quantité qui comble le manque.
+     --------------------------------------------------------- */
+
+  var suggestState = { items: [] };
+
+  function niceGrams(g, food) {
+    if (food.portion && food.portion.grams > 0) {
+      var qty = Math.max(1, Math.round(g / food.portion.grams));
+      return { grams: round1(qty * food.portion.grams), portionQty: qty };
+    }
+    var step = g >= 100 ? 25 : 10;
+    return { grams: Math.max(step, Math.round(g / step) * step), portionQty: null };
+  }
+
+  function qtyLabel(food, q) {
+    if (q.portionQty) return q.portionQty + " × " + food.portion.label;
+    return fmtNum(q.grams) + " g";
+  }
+
+  // Aliments pour combler les protéines (puis les calories) qui manquent.
+  function buildSuggestions(left) {
+    var foods = loadFoods();
+    var usage = loadUsage();
+    var recent = {};
+    averageDailyFoods().items.forEach(function (it) { recent[it.id] = true; });
+    foods = foods.filter(function (f) { return !isSupplement(f.name) || usage[f.id] || recent[f.id]; });
+    var out = [];
+
+    function rank(list, scoreFn) {
+      return list.slice().sort(function (a, b) { return scoreFn(b) - scoreFn(a); });
+    }
+
+    if (left.protein >= 15) {
+      // Aliments « protéinés » : au moins 30 % des calories viennent des protéines.
+      var lean = foods.filter(function (f) {
+        return f.kcal > 0 && f.protein >= 8 && (f.protein * KCAL_PER_G.protein) / f.kcal >= 0.3;
+      });
+      lean = rank(lean, function (f) { return (recent[f.id] ? 20 : 0) + (usage[f.id] || 0) * 3 + f.protein / 10; });
+      var goal = Math.min(left.protein, 45);
+      for (var i = 0; i < lean.length && out.length < 3; i++) {
+        var f = lean[i];
+        var g = Math.min(goal / f.protein * 100, 400);
+        if (left.kcal > 0) g = Math.min(g, left.kcal / f.kcal * 100);
+        if (g < 30) continue;
+        var q = niceGrams(g, f);
+        out.push({ food: f, q: q, m: macrosFor(f, q.grams), why: "protéines" });
+      }
+    } else if (left.kcal >= 250) {
+      // Protéines atteintes : on complète avec ce que tu manges d'habitude.
+      var energy = foods.filter(function (f) { return f.kcal >= 80 && (usage[f.id] || 0) > 0; });
+      if (energy.length < 2) energy = foods.filter(function (f) { return f.kcal >= 80; });
+      energy = rank(energy, function (f) { return (recent[f.id] ? 20 : 0) + (usage[f.id] || 0) * 3 + (f.carbs > f.fat ? 1 : 0); });
+      for (var j = 0; j < energy.length && out.length < 3; j++) {
+        var e = energy[j];
+        var ge = Math.min(left.kcal / e.kcal * 100, 300);
+        if (ge < 20) continue;
+        var qe = niceGrams(ge, e);
+        out.push({ food: e, q: qe, m: macrosFor(e, qe.grams), why: "calories" });
+      }
+    }
+    return out;
+  }
+
+  function renderSummary(view, totals, targets, isToday) {
+    var left = {
+      kcal: round(targets.kcal - totals.kcal),
+      protein: round(targets.protein - totals.protein)
+    };
+    var head = $("summaryHeadline");
+    var detail = $("summaryDetail");
+    var list = $("suggestList");
+    suggestState.items = [];
+    list.innerHTML = "";
+
+    var profile = readJSON(STORAGE_PROFILE);
+    var info = profile ? rampInfo(profile, view.date) : null;
+    var notes = [];
+    if (info) notes.push("Palier semaine " + info.week + " de ta montée progressive (cible finale " + info.final.toLocaleString("fr-FR") + " kcal).");
+    if (view.stepsBonus) notes.push("+" + view.stepsBonus + " kcal : tu as marché plus que d'habitude (" + (view.steps || 0).toLocaleString("fr-FR") + " pas).");
+
+    if (!isToday) {
+      var pct = targets.kcal > 0 ? round(totals.kcal / targets.kcal * 100) : 0;
+      head.textContent = round(totals.kcal).toLocaleString("fr-FR") + " kcal et " + round(totals.protein) + " g de protéines ce jour-là.";
+      notes.unshift(pct + " % de la cible de calories.");
+      detail.textContent = notes.join(" ");
+      return;
+    }
+
+    if (left.protein <= 5 && Math.abs(left.kcal) <= targets.kcal * 0.1) {
+      head.textContent = "Objectifs du jour atteints, bravo !";
+    } else if (left.kcal < 0) {
+      head.textContent = "Calories dépassées de " + (-left.kcal) + " kcal" +
+        (left.protein > 5 ? ", mais il manque encore " + left.protein + " g de protéines." : ".");
+    } else {
+      head.textContent = "Il te reste " + left.kcal.toLocaleString("fr-FR") + " kcal" +
+        (left.protein > 5 ? " et " + left.protein + " g de protéines." : ". Protéines : c'est bon ✓");
+    }
+
+    var sugg = buildSuggestions(left);
+    if (sugg.length) {
+      notes.push(sugg[0].why === "protéines" ? "Pour tes protéines, de ta base :" : "Pour compléter tes calories :");
+    }
+    detail.textContent = notes.join(" ");
+    suggestState.items = sugg;
+
+    var html = "";
+    for (var i = 0; i < sugg.length; i++) {
+      var s = sugg[i];
+      html +=
+        '<li class="suggest-item">' +
+          '<span class="suggest-name">' + escapeHtml(s.food.name) +
+            '<span class="suggest-macros">' + escapeHtml(qtyLabel(s.food, s.q)) + ' · ' + round(s.m.protein) + ' g prot. · ' + round(s.m.kcal) + ' kcal</span>' +
+          '</span>' +
+          '<button type="button" class="chip-btn" data-sugg="' + i + '" aria-label="Ajouter ' + escapeHtml(s.food.name) + '">+ Ajouter</button>' +
+        '</li>';
+    }
+    list.innerHTML = html;
+    var btns = list.querySelectorAll("[data-sugg]");
+    for (var k = 0; k < btns.length; k++) {
+      btns[k].addEventListener("click", function (ev) {
+        addSuggestion(suggestState.items[parseInt(ev.currentTarget.getAttribute("data-sugg"), 10)]);
+      });
+    }
+  }
+
+  function addSuggestion(s) {
+    if (!s) return;
+    var key = currentDayKey();
+    if (!ensureDayRecord(key)) return;
+    var f = s.food;
+    var entry = {
+      name: f.name, kcal: s.m.kcal, protein: s.m.protein, fat: s.m.fat, carbs: s.m.carbs,
+      grams: s.q.grams,
+      per100: { kcal: f.kcal, protein: f.protein, fat: f.fat, carbs: f.carbs },
+      foodId: f.id
+    };
+    if (s.q.portionQty) {
+      entry.portionLabel = f.portion.label;
+      entry.portionQty = s.q.portionQty;
+      entry.portionGrams = f.portion.grams;
+    }
+    var before = readJSON(STORAGE_HISTORY);
+    if (!addFoodToDay(key, entry)) return;
+    bumpUsage(f.id);
+    refreshTracker();
+    showToast("Ajouté : " + f.name + " — " + qtyLabel(f, s.q), function () {
+      writeJSON(STORAGE_HISTORY, before);
+      refreshTracker();
+    });
+  }
+
+  /* ---------------------------------------------------------
+     Créatine : une case par jour (3 à 5 g, n'importe quand).
+     --------------------------------------------------------- */
+
+  function renderCreatine(view) {
+    var history = loadHistory();
+    var count = 0;
+    for (var i = 0; i < 7; i++) {
+      var k = dateKeyFromDate(addDays(parseDateKey(view.date), -i));
+      var r = k === view.date ? view : history[k];
+      if (r && r.creatine) count++;
+    }
+    var btn = $("creatineBtn");
+    btn.textContent = view.creatine ? "Prise ✓" : "Je l'ai prise";
+    btn.className = view.creatine ? "btn-ghost creatine-btn creatine-done" : "btn-primary creatine-btn";
+    $("creatineWeek").textContent = count + " / 7 jours cette semaine · 3 à 5 g par jour";
+  }
+
+  function toggleCreatine() {
+    var key = currentDayKey();
+    if (!ensureDayRecord(key)) return;
+    var history = loadHistory();
+    var rec = history[key];
+    rec.creatine = !rec.creatine;
+    if (!rec.creatine) delete rec.creatine;
+    saveHistory(history);
+    refreshTracker();
   }
 
   function handleResetDay() {
@@ -3537,16 +4086,373 @@
   }
 
   /* ---------------------------------------------------------
+     Liste de courses de la semaine
+     Partie de ce que tu manges vraiment (journal des 14 derniers
+     jours) : quantité moyenne par jour de chaque aliment, puis mise
+     à l'échelle de tes cibles des prochains jours (montée progressive
+     comprise). Les aliments protéinés sont ajustés pour atteindre tes
+     protéines, les autres pour compléter les calories. Pas de recettes,
+     pas de repas imposés : seulement tes aliments.
+     --------------------------------------------------------- */
+
+  var STORAGE_SHOP_CHECKED = "nl_shop_checked_v1";
+  var STORAGE_SHOP_CUSTOM = "nl_shop_custom_v1";
+  var SHOP_WINDOW_DAYS = 14;
+  var SHOP_MIN_DAYS = 3;
+  var shopState = { days: 7, list: null };
+
+  // Liste de départ quand le journal est encore trop court (grammes par jour).
+  var SHOP_STARTER = [
+    { id: "d-boeufhache", g: 200 }, { id: "d-poulet", g: 150 }, { id: "d-fromageblanc", g: 400 },
+    { id: "d-oeuf", g: 100 }, { id: "d-riz", g: 200 }, { id: "d-avoine", g: 60 },
+    { id: "d-banane", g: 120 }, { id: "d-huileolive", g: 20 }, { id: "d-brocoli", g: 250 }
+  ];
+
+  // Poudres et compléments : proposés seulement si tu en utilises déjà.
+  function isSupplement(name) {
+    return /whey|prot[ée]ine en poudre|poudre|isolat|cas[ée]ine/i.test(name);
+  }
+
+  // Quantité maximale raisonnable par jour pour un seul aliment.
+  function dailyCap(p, name) {
+    if (isSupplement(name)) return 60;
+    if (p.fat >= 50) return 40;
+    if (isProteinFood(p)) return p.kcal < 80 ? 500 : 300;
+    return 450;
+  }
+
+  function isProteinFood(p) {
+    return p.kcal > 0 && p.protein >= 8 && (p.protein * KCAL_PER_G.protein) / p.kcal >= 0.3;
+  }
+
+  function shopCategory(p, name) {
+    if (isProteinFood(p)) return "Protéines";
+    if (p.fat >= 50) return "Matières grasses";
+    if (p.carbs >= 40) return "Féculents & céréales";
+    if (p.kcal < 120 || /l[ée]gume|fruit|pomme|banane|salade|tomate|carotte|courgette|brocoli|haricot vert|épinard/i.test(name)) return "Fruits & légumes";
+    return "Autres";
+  }
+
+  var SHOP_ORDER = ["Protéines", "Féculents & céréales", "Fruits & légumes", "Matières grasses", "Autres"];
+
+  function weekStartKey() {
+    var d = new Date();
+    var day = (d.getDay() + 6) % 7; // lundi = 0
+    return dateKeyFromDate(addDays(d, -day));
+  }
+
+  // Quantités moyennes par jour, depuis le journal.
+  function averageDailyFoods() {
+    var history = loadHistory();
+    var foods = loadFoods();
+    var today = todayKey();
+    var agg = {};
+    var nDays = 0;
+    for (var i = 0; i < SHOP_WINDOW_DAYS; i++) {
+      var key = dateKeyFromDate(addDays(parseDateKey(today), -i));
+      var r = history[key];
+      if (!r || !r.entries.length) continue;
+      nDays++;
+      for (var j = 0; j < r.entries.length; j++) {
+        var e = r.entries[j];
+        if (!e.grams || e.grams <= 0) continue;
+        var per100 = e.per100 || { kcal: e.kcal / e.grams * 100, protein: e.protein / e.grams * 100, fat: e.fat / e.grams * 100, carbs: e.carbs / e.grams * 100 };
+        var id = e.foodId || ("n:" + normalizeText(e.name));
+        if (!agg[id]) {
+          var food = e.foodId ? findFoodById(foods, e.foodId) : null;
+          agg[id] = { id: id, name: food ? food.name : e.name, per100: per100, grams: 0, portion: food && food.portion ? food.portion : null };
+        }
+        agg[id].grams += e.grams;
+      }
+    }
+    var items = [];
+    for (var k in agg) {
+      if (!agg.hasOwnProperty(k)) continue;
+      agg[k].daily = agg[k].grams / Math.max(1, nDays);
+      if (agg[k].daily >= 5) items.push(agg[k]);
+    }
+    return { items: items, days: nDays };
+  }
+
+  function starterItems() {
+    var foods = loadFoods();
+    var out = [];
+    for (var i = 0; i < SHOP_STARTER.length; i++) {
+      var f = findFoodById(foods, SHOP_STARTER[i].id);
+      if (!f) continue;
+      out.push({ id: f.id, name: f.name, per100: { kcal: f.kcal, protein: f.protein, fat: f.fat, carbs: f.carbs }, daily: SHOP_STARTER[i].g, portion: f.portion || null });
+    }
+    return out;
+  }
+
+  function plannedTargets(profile, days) {
+    var kcal = 0, prot = 0;
+    for (var i = 0; i < days; i++) {
+      var t = targetsForDay(profile, dateKeyFromDate(addDays(new Date(), i)));
+      kcal += t.kcal; prot += t.protein;
+    }
+    return { kcal: kcal / days, protein: prot / days };
+  }
+
+  function buildShoppingList(days) {
+    var profile = readJSON(STORAGE_PROFILE);
+    if (!profile) return null;
+    var avg = averageDailyFoods();
+    var fromJournal = avg.days >= SHOP_MIN_DAYS && avg.items.length > 0;
+    var items = fromJournal ? avg.items : starterItems();
+    var target = plannedTargets(profile, days);
+
+    function sumOf(list, key, scale) {
+      var s = 0;
+      for (var i = 0; i < list.length; i++) s += list[i].per100[key] * list[i].daily / 100 * (scale || 1);
+      return s;
+    }
+
+    var protItems = items.filter(function (it) { return isProteinFood(it.per100); });
+    var otherItems = items.filter(function (it) { return !isProteinFood(it.per100); });
+    var protFromOthers = sumOf(otherItems, "protein");
+    var protFromP = sumOf(protItems, "protein");
+    var sP = protFromP > 0 ? Math.max(0.8, Math.min(3, (target.protein - protFromOthers) / protFromP)) : 1;
+
+    // Chaque aliment protéiné garde une quantité raisonnable (pas 600 g de viande par jour).
+    protItems.forEach(function (it) {
+      it.scaled = Math.min(it.daily * sP, Math.max(it.daily, dailyCap(it.per100, it.name)));
+    });
+    function protOf(list) {
+      var s = 0;
+      list.forEach(function (it) { s += it.per100.protein * (it.scaled !== undefined ? it.scaled : it.daily) / 100; });
+      return s;
+    }
+
+    // Il manque encore des protéines : on ajoute d'autres aliments protéinés
+    // de ta base, différents de ceux que tu prends déjà, pour varier.
+    var extras = [];
+    var protGap = target.protein - protFromOthers - protOf(protItems);
+    if (protGap > 15) {
+      var have = {};
+      items.forEach(function (it) { have[it.id] = true; });
+      var usage = loadUsage();
+      var lean = loadFoods().filter(function (f) {
+        return !have[f.id] && isProteinFood(f) && (!isSupplement(f.name) || usage[f.id]);
+      });
+      lean.sort(function (a, b) { return ((usage[b.id] || 0) * 3 + b.protein / 10) - ((usage[a.id] || 0) * 3 + a.protein / 10); });
+      for (var x = 0; x < lean.length && protGap > 15 && extras.length < 3; x++) {
+        var f = lean[x];
+        var per = { kcal: f.kcal, protein: f.protein, fat: f.fat, carbs: f.carbs };
+        var g = Math.min(dailyCap(per, f.name), protGap / f.protein * 100);
+        if (g < 30) continue;
+        extras.push({ id: f.id, name: f.name, per100: per, daily: g, portion: f.portion || null, added: true });
+        protGap -= f.protein * g / 100;
+      }
+    }
+
+    var kcalFixed = 0;
+    protItems.forEach(function (it) { kcalFixed += it.per100.kcal * it.scaled / 100; });
+    kcalFixed += sumOf(extras, "kcal");
+    var kcalOthers = sumOf(otherItems, "kcal");
+    var sK = kcalOthers > 0 ? Math.max(0.7, Math.min(3, (target.kcal - kcalFixed) / kcalOthers)) : 1;
+
+    var all = [];
+    protItems.forEach(function (it) { all.push({ it: it, daily: it.scaled }); });
+    otherItems.forEach(function (it) { all.push({ it: it, daily: Math.min(it.daily * sK, Math.max(it.daily, dailyCap(it.per100, it.name))) }); });
+    extras.forEach(function (it) { all.push({ it: it, daily: it.daily }); });
+
+    var planned = { kcal: 0, protein: 0 };
+    var groups = {};
+    all.forEach(function (row) {
+      var it = row.it;
+      planned.kcal += it.per100.kcal * row.daily / 100;
+      planned.protein += it.per100.protein * row.daily / 100;
+      var total = row.daily * days;
+      var qty;
+      var nPortions = it.portion && it.portion.grams > 0 ? Math.max(1, Math.ceil(total / it.portion.grams)) : 0;
+      if (nPortions && nPortions <= 24) {
+        qty = nPortions + " × " + it.portion.label;
+      } else if (total >= 1000) {
+        qty = fmtNum(Math.round(total / 100) / 10) + " kg";
+      } else {
+        qty = Math.max(50, Math.round(total / 50) * 50) + " g";
+      }
+      var cat = shopCategory(it.per100, it.name);
+      if (!groups[cat]) groups[cat] = [];
+      groups[cat].push({ key: it.id, name: it.name, qty: qty, perDay: round(row.daily), added: !!it.added });
+    });
+
+    var hasVeg = all.some(function (row) { return row.it.per100.kcal < 60 && !isProteinFood(row.it.per100); });
+    if (!hasVeg) {
+      if (!groups["Fruits & légumes"]) groups["Fruits & légumes"] = [];
+      groups["Fruits & légumes"].push({ key: "veg", name: "Légumes au choix (frais ou surgelés)", qty: "≈ " + fmtNum(Math.round(0.3 * days * 10) / 10) + " kg", perDay: 300, added: true });
+    }
+    for (var c in groups) {
+      if (groups.hasOwnProperty(c)) groups[c].sort(function (a, b) { return a.name.localeCompare(b.name, "fr"); });
+    }
+
+    return {
+      fromJournal: fromJournal,
+      journalDays: avg.days,
+      target: { kcal: round(target.kcal), protein: round(target.protein) },
+      planned: { kcal: round(planned.kcal), protein: round(planned.protein) },
+      groups: groups
+    };
+  }
+
+  function loadShopChecked() {
+    var all = readJSON(STORAGE_SHOP_CHECKED) || {};
+    return all[weekStartKey()] || {};
+  }
+
+  function saveShopChecked(map) {
+    var all = {};
+    all[weekStartKey()] = map; // seule la semaine en cours est gardée
+    writeJSON(STORAGE_SHOP_CHECKED, all);
+  }
+
+  function refreshShopping() {
+    var profile = readJSON(STORAGE_PROFILE);
+    $("shopNoProfile").hidden = !!profile;
+    $("shopContent").hidden = !profile;
+    if (!profile) return;
+
+    var list = buildShoppingList(shopState.days);
+    shopState.list = list;
+    var checked = loadShopChecked();
+    $("shopDays").value = String(shopState.days);
+
+    $("shopNote").textContent = (list.fromJournal
+      ? "D'après tes " + list.journalDays + " derniers jours de journal, "
+      : "Ton journal est encore trop court (moins de " + SHOP_MIN_DAYS + " jours) : liste de départ, ") +
+      "ajustée à " + list.target.kcal.toLocaleString("fr-FR") + " kcal et " + list.target.protein + " g de protéines par jour. " +
+      "Cette liste couvre environ " + list.planned.kcal.toLocaleString("fr-FR") + " kcal et " + list.planned.protein + " g de protéines par jour.";
+
+    var html = "";
+    SHOP_ORDER.forEach(function (cat) {
+      var rows = list.groups[cat];
+      if (!rows || !rows.length) return;
+      html += '<h3 class="shop-cat">' + escapeHtml(cat) + '</h3><ul class="shop-list">';
+      rows.forEach(function (row) {
+        var id = "shop_" + escapeHtml(row.key.replace(/[^A-Za-z0-9_-]/g, "_"));
+        var on = !!checked[row.key];
+        html +=
+          '<li class="shop-item' + (on ? ' shop-done' : '') + '">' +
+            '<label class="shop-label" for="' + id + '">' +
+              '<input type="checkbox" id="' + id + '" data-shop="' + escapeHtml(row.key) + '"' + (on ? ' checked' : '') + '>' +
+              '<span class="shop-name">' + escapeHtml(row.name) +
+                (row.added ? ' <span class="shop-badge">pour tes cibles</span>' : '') +
+                '<span class="shop-perday">≈ ' + row.perDay + ' g par jour</span>' +
+              '</span>' +
+              '<span class="shop-qty">' + escapeHtml(row.qty) + '</span>' +
+            '</label>' +
+          '</li>';
+      });
+      html += '</ul>';
+    });
+
+    var custom = readJSON(STORAGE_SHOP_CUSTOM) || [];
+    if (custom.length) {
+      html += '<h3 class="shop-cat">Ajouts perso</h3><ul class="shop-list">';
+      custom.forEach(function (c) {
+        var on = !!checked["c:" + c.id];
+        html +=
+          '<li class="shop-item' + (on ? ' shop-done' : '') + '">' +
+            '<label class="shop-label">' +
+              '<input type="checkbox" data-shop="c:' + escapeHtml(c.id) + '"' + (on ? ' checked' : '') + '>' +
+              '<span class="shop-name">' + escapeHtml(c.text) + '</span>' +
+            '</label>' +
+            '<button type="button" class="food-del" data-shop-del="' + escapeHtml(c.id) + '" aria-label="Retirer ' + escapeHtml(c.text) + '">×</button>' +
+          '</li>';
+      });
+      html += '</ul>';
+    }
+    $("shopLists").innerHTML = html;
+
+    var boxes = $("shopLists").querySelectorAll("[data-shop]");
+    for (var i = 0; i < boxes.length; i++) {
+      boxes[i].addEventListener("change", function (ev) {
+        var map = loadShopChecked();
+        var key = ev.currentTarget.getAttribute("data-shop");
+        if (ev.currentTarget.checked) map[key] = true; else delete map[key];
+        saveShopChecked(map);
+        ev.currentTarget.closest(".shop-item").classList.toggle("shop-done", ev.currentTarget.checked);
+      });
+    }
+    var dels = $("shopLists").querySelectorAll("[data-shop-del]");
+    for (var d = 0; d < dels.length; d++) {
+      dels[d].addEventListener("click", function (ev) {
+        var id = ev.currentTarget.getAttribute("data-shop-del");
+        withUndo([STORAGE_SHOP_CUSTOM], "Article retiré", function () {
+          writeJSON(STORAGE_SHOP_CUSTOM, (readJSON(STORAGE_SHOP_CUSTOM) || []).filter(function (c) { return c.id !== id; }));
+        }, refreshShopping);
+      });
+    }
+  }
+
+  function shoppingText() {
+    var list = shopState.list;
+    if (!list) return "";
+    var lines = ["Courses NaturaLift — " + shopState.days + " jours", ""];
+    SHOP_ORDER.forEach(function (cat) {
+      var rows = list.groups[cat];
+      if (!rows || !rows.length) return;
+      lines.push(cat.toUpperCase());
+      rows.forEach(function (r) { lines.push("☐ " + r.name + " — " + r.qty); });
+      lines.push("");
+    });
+    var custom = readJSON(STORAGE_SHOP_CUSTOM) || [];
+    if (custom.length) {
+      lines.push("AJOUTS PERSO");
+      custom.forEach(function (c) { lines.push("☐ " + c.text); });
+    }
+    return lines.join("\n").trim();
+  }
+
+  function shareShopping() {
+    var text = shoppingText();
+    if (nativeApp() && nativeCall(function (n) { return n.share(text); })) return;
+    if (navigator.share) {
+      navigator.share({ title: "Liste de courses", text: text }).catch(function () {});
+      return;
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () { showToast("Liste copiée"); }, function () { uiAlert(text); });
+      return;
+    }
+    uiAlert(text);
+  }
+
+  function setupShopping() {
+    $("shopDays").addEventListener("change", function () {
+      shopState.days = parseInt($("shopDays").value, 10) || 7;
+      refreshShopping();
+    });
+    $("shopShare").addEventListener("click", shareShopping);
+    $("shopReset").addEventListener("click", function () {
+      withUndo([STORAGE_SHOP_CHECKED], "Cases décochées", function () { saveShopChecked({}); }, refreshShopping);
+    });
+    $("shopAddForm").addEventListener("submit", function (e) {
+      e.preventDefault();
+      var text = $("shopAddInput").value.trim().slice(0, 80);
+      if (!text) return;
+      var custom = readJSON(STORAGE_SHOP_CUSTOM) || [];
+      custom.push({ id: genId("shop"), text: text });
+      writeJSON(STORAGE_SHOP_CUSTOM, custom);
+      $("shopAddInput").value = "";
+      refreshShopping();
+    });
+    $("goToCalcFromShop").addEventListener("click", openSettings);
+  }
+
+  /* ---------------------------------------------------------
      Navigation (barre du bas)
      --------------------------------------------------------- */
 
-  var TAB_PANELS = { track: "panel-track", history: "panel-history", weight: "panel-weight", foods: "panel-foods" };
+  var TAB_PANELS = { track: "panel-track", history: "panel-history", weight: "panel-weight", shop: "panel-shop", foods: "panel-foods" };
   var activeTab = "track";
 
   function refreshActiveTab() {
     if (activeTab === "track") refreshTracker();
     if (activeTab === "history") refreshHistory();
     if (activeTab === "weight") refreshWeightPanel();
+    if (activeTab === "shop") refreshShopping();
     if (activeTab === "foods") {
       refreshFoodsPanel();
       refreshFavoritesManage();
@@ -3597,7 +4503,41 @@
     $("sessions").addEventListener("change", updateActivityHint);
     updateActivityHint();
     setupSleep();
+    setupShopping();
     $("resetDay").addEventListener("click", handleResetDay);
+    $("creatineBtn").addEventListener("click", toggleCreatine);
+    $("rampEnabled").addEventListener("change", function () {
+      $("rampFields").hidden = !$("rampEnabled").checked;
+      saveRampFromForm();
+    });
+    $("rampStart").addEventListener("change", saveRampFromForm);
+    $("rampStep").addEventListener("change", saveRampFromForm);
+    $("healthBtn").addEventListener("click", function () {
+      nativeCall(function (n) { n.requestHealth(); });
+    });
+    $("stepsAdjust").addEventListener("change", function () {
+      var profile = readJSON(STORAGE_PROFILE);
+      if (!profile) return;
+      profile.stepsAdjust = $("stepsAdjust").checked;
+      writeJSON(STORAGE_PROFILE, profile);
+      syncHealth(true);
+      if (!profile.stepsAdjust) {
+        var history = loadHistory();
+        if (history[todayKey()]) { delete history[todayKey()].stepsBonus; saveHistory(history); }
+      }
+    });
+    // L'appli Android prévient quand elle revient au premier plan ou
+    // qu'une permission change : on resynchronise.
+    window.addEventListener("naturalift-native", function () {
+      syncHealth(false);
+      checkForUpdate();
+      refreshNativeSummary();
+      var profile = readJSON(STORAGE_PROFILE);
+      if (profile && !$("settingsOverlay").hidden) {
+        renderHealthBlock(profile);
+        renderRemindersBlock();
+      }
+    });
     $("copyPrevDay").addEventListener("click", handleCopyPrevDay);
     $("scannerClose").addEventListener("click", closeScanner);
 
@@ -3767,6 +4707,10 @@
         });
       });
     }
+
+    // Appli Android : Samsung Health et mises à jour au démarrage.
+    syncHealth(true);
+    checkForUpdate();
 
     // Retour sur l'appli (ex : le lendemain matin) : on rafraîchit.
     document.addEventListener("visibilitychange", function () {
