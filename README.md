@@ -9,6 +9,10 @@ Appli web (PWA) de nutrition pour la musculation naturelle : calcul des calories
 - **Journal du jour** : toucher un aliment pour modifier sa quantité ; quantités en grammes ou en portions (« 2 œufs ») ; recherche dans ta base d'aliments (sans tenir compte des accents), scan de code-barres (Open Food Facts), saisie manuelle avec photo, repas favoris, copie du journal de la veille.
 - **Toutes les journées** : flèches ‹ › pour passer d'un jour à l'autre et compléter un oubli.
 - **Type de journée** : glucides ajustés les jours d'entraînement (+15 %) et de repos (−15 %).
+- **Montée progressive** : quand on mange beaucoup moins que la cible, l'objectif monte par paliers (+200 à +400 kcal par semaine). Les protéines gardent leur cible dès le début.
+- **Résumé du jour** : « il te reste X kcal et Y g de protéines », avec des aliments de ta base et la quantité qui comble le manque.
+- **Créatine** : une case par jour et le compte de la semaine.
+- **Liste de courses** : calculée à partir de ce que tu as mangé ces 14 derniers jours, ajustée à tes cibles des prochains jours (protéines d'abord, puis calories), à cocher et à partager.
 - **Historique** : liste, calendrier coloré et bilans sur 7 et 30 jours.
 - **Poids** : pesées datées, courbe de tendance sur 7 jours, suggestion d'ajustement, mise à jour des cibles quand le poids change, mensurations.
 - **Annuler** : chaque suppression peut être annulée pendant quelques secondes.
@@ -20,6 +24,10 @@ Le dossier `android/` contient une petite appli Android qui affiche NaturaLift e
 
 - **Rappel de coucher** : l'appli lit le prochain réveil de l'Horloge du téléphone, calcule l'heure de coucher (réveil − sommeil voulu − temps d'endormissement) et envoie une vraie notification avant.
 - **Sauvegarde** : l'export JSON est enregistré dans Téléchargements.
+- **Samsung Health** (via Health Connect, lecture seule) : sommeil de la nuit, pas (calories ajoutées les jours où tu marches plus que d'habitude) et séances (journée « Entraînement » automatique).
+- **Rappels** : pesée du matin, collation protéinée, créatine. Un rappel ne sonne pas si c'est déjà fait.
+- **Widget** d'écran d'accueil : calories et protéines restantes.
+- **Mises à jour** : chaque version est publiée dans *Releases* et l'appli prévient quand une nouvelle version sort. Lien direct : `https://github.com/Getsugo/Naturalift/releases/latest/download/NaturaLift.apk`.
 
 Le code de l'appli web reste à la racine : il est copié dans l'APK à chaque construction. L'APK est construit automatiquement par GitHub Actions (`.github/workflows/android.yml`) et se télécharge dans l'onglet **Actions** du dépôt. Il faut deux secrets dans *Settings → Secrets and variables → Actions* : `KEYSTORE_B64` (la clé de signature en base64) et `KEYSTORE_PASSWORD`. Garde le fichier `naturalift.jks` en lieu sûr : sans lui, impossible de mettre l'appli à jour sur le téléphone.
 

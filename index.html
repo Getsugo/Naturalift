@@ -44,6 +44,17 @@
           <button type="button" id="dayNext" class="day-nav-btn" aria-label="Jour suivant">›</button>
         </div>
 
+        <div id="updateBanner" class="card update-card" hidden>
+          <p id="updateText" class="update-text"></p>
+          <button type="button" id="updateBtn" class="btn-primary">Télécharger la mise à jour</button>
+        </div>
+
+        <div class="card summary-card" id="summaryCard">
+          <p id="summaryHeadline" class="summary-headline"></p>
+          <p id="summaryDetail" class="summary-detail"></p>
+          <ul id="suggestList" class="suggest-list"></ul>
+        </div>
+
         <div class="card gauges-card">
           <div class="gauges-grid" id="gaugesGrid">
             <!-- injecté par app.js -->
@@ -73,6 +84,16 @@
           <div class="hydration-actions">
             <button type="button" id="hydrationMinus" class="btn-ghost hydration-btn">− 250 ml</button>
             <button type="button" id="hydrationPlus" class="btn-primary hydration-btn">+ 250 ml</button>
+          </div>
+        </div>
+
+        <div class="card creatine-card">
+          <div class="creatine-row">
+            <div class="creatine-info">
+              <h2 class="card-title-sm">Créatine</h2>
+              <span id="creatineWeek" class="creatine-week"></span>
+            </div>
+            <button type="button" id="creatineBtn" class="btn-ghost creatine-btn">Prise ✓</button>
           </div>
         </div>
 
@@ -226,6 +247,7 @@
               <span id="sleepBedtime" class="sleep-cell-value">—</span>
             </div>
           </div>
+          <p id="sleepNight" class="sleep-note" hidden></p>
           <p id="sleepNote" class="sleep-note"></p>
 
           <div class="field" id="sleepWakeField" hidden>
@@ -472,6 +494,38 @@
     </section>
 
     <!-- ===================== ALIMENTS (base de données) ===================== -->
+    <section id="panel-shop" class="panel" hidden>
+
+      <div id="shopNoProfile" class="card empty-card" hidden>
+        <p>Configure d'abord ton profil : la liste est calculée à partir de tes cibles.</p>
+        <button type="button" id="goToCalcFromShop" class="btn-primary">Configurer mon profil</button>
+      </div>
+
+      <div id="shopContent" hidden>
+        <div class="card">
+          <div class="shop-header">
+            <h2 class="card-title-sm">Liste de courses</h2>
+            <select id="shopDays" class="shop-days" aria-label="Nombre de jours">
+              <option value="3">3 jours</option>
+              <option value="5">5 jours</option>
+              <option value="7" selected>7 jours</option>
+            </select>
+          </div>
+          <p id="shopNote" class="shop-note"></p>
+          <div id="shopLists"></div>
+          <form id="shopAddForm" class="shop-add">
+            <input type="text" id="shopAddInput" placeholder="Ajouter un article (ex : liquide vaisselle)" maxlength="80" autocomplete="off">
+            <button type="submit" class="chip-btn">+ Ajouter</button>
+          </form>
+          <div class="shop-actions">
+            <button type="button" id="shopShare" class="btn-primary">Partager la liste</button>
+            <button type="button" id="shopReset" class="btn-ghost">Tout décocher</button>
+          </div>
+        </div>
+      </div>
+
+    </section>
+
     <section id="panel-foods" class="panel" hidden>
 
       <div class="card foods-search-card">
@@ -571,6 +625,10 @@
   <button type="button" class="nav-item" data-tab="weight">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 18l5-6 4 3 7-9"/><path d="M15 6h5v5"/></svg>
     <span>Poids</span>
+  </button>
+  <button type="button" class="nav-item" data-tab="shop">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 4h2.5l2.2 10.5a1.5 1.5 0 0 0 1.5 1.2h7.9a1.5 1.5 0 0 0 1.5-1.1L20.5 8H6.4"/><circle cx="10" cy="19.5" r="1.3"/><circle cx="17" cy="19.5" r="1.3"/></svg>
+    <span>Courses</span>
   </button>
   <button type="button" class="nav-item" data-tab="foods">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4v7a3 3 0 0 0 6 0V4M8 4v16"/><path d="M17 20V4c-2 1.5-3 4-3 7h3"/></svg>
@@ -687,6 +745,48 @@
         <p id="tdeeText" class="tdee-text"></p>
         <button type="button" id="tdeeUseBtn" class="btn-primary" hidden>Utiliser ma dépense réelle</button>
         <button type="button" id="tdeeResetBtn" class="btn-ghost tdee-reset" hidden>Revenir à la formule</button>
+      </div>
+
+      <div id="rampBlock" class="tdee-block settings-block">
+        <h2 class="card-title-sm">Montée progressive</h2>
+        <p class="tdee-text">Si tu manges aujourd'hui beaucoup moins que ta cible, monte par paliers chaque semaine. Les protéines gardent leur cible dès le début : ce sont les glucides qui suivent le palier.</p>
+        <label class="checkbox-row">
+          <input type="checkbox" id="rampEnabled">
+          Monter progressivement jusqu'à ma cible
+        </label>
+        <div id="rampFields" class="field-grid" hidden>
+          <div class="field">
+            <label for="rampStart">Je mange environ (kcal)</label>
+            <input type="number" id="rampStart" min="800" max="5000" step="50" inputmode="numeric">
+          </div>
+          <div class="field">
+            <label for="rampStep">Hausse par semaine</label>
+            <select id="rampStep">
+              <option value="200">+200 kcal</option>
+              <option value="300" selected>+300 kcal</option>
+              <option value="400">+400 kcal</option>
+            </select>
+          </div>
+        </div>
+        <p id="rampStatus" class="kcal-source"></p>
+      </div>
+
+      <div id="healthBlock" class="tdee-block settings-block" hidden>
+        <h2 class="card-title-sm">Samsung Health</h2>
+        <p id="healthText" class="tdee-text"></p>
+        <label class="checkbox-row" id="stepsAdjustRow" hidden>
+          <input type="checkbox" id="stepsAdjust" checked>
+          Ajouter des calories les jours où je marche plus que d'habitude
+        </label>
+        <button type="button" id="healthBtn" class="btn-primary" hidden>Connecter Samsung Health</button>
+      </div>
+
+      <div id="remindersBlock" class="tdee-block settings-block" hidden>
+        <h2 class="card-title-sm">Rappels</h2>
+        <p class="tdee-text">De vraies notifications sur ton téléphone. Un rappel ne sonne pas s'il est déjà fait (pesée notée, créatine cochée).</p>
+        <div id="remindersList" class="reminders-list">
+          <!-- injecté par app.js -->
+        </div>
       </div>
 
       <div class="period-block">
