@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">NaturaLift</string>
+    <string name="widget_description">Calories et protéines restantes aujourd\'hui</string>
+    <string name="privacy_title">Confidentialité</string>
 </resources>
