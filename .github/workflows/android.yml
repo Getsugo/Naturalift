@@ -1,11 +1,21 @@
-# Construit l'appli Android (APK) à chaque envoi sur GitHub.
-# Le fichier se télécharge dans l'onglet « Actions » du dépôt → dernière exécution → « NaturaLift-apk ».
+# Construit l'appli Android (APK) à chaque envoi sur GitHub, puis la publie
+# dans « Releases ». Lien direct vers la dernière version :
+# https://github.com/Getsugo/Naturalift/releases/latest/download/NaturaLift.apk
+# L'appli vérifie elle-même s'il y a une nouvelle version.
 name: Appli Android
 
 on:
   push:
     branches: [ main, master ]
   workflow_dispatch:
+
+permissions:
+  contents: write
+
+# Plusieurs envois rapprochés : seule la dernière version est construite.
+concurrency:
+  group: android
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -57,3 +67,12 @@ jobs:
         with:
           name: NaturaLift-apk
           path: NaturaLift.apk
+
+      - name: Publier la version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v${{ github.run_number }}" NaturaLift.apk \
+            --title "NaturaLift v${{ github.run_number }}" \
+            --notes "Version construite automatiquement à partir de ${GITHUB_SHA::7}." \
+            --latest
