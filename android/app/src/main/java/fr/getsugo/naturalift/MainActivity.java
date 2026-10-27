@@ -20,6 +20,7 @@ import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.widget.FrameLayout;
 
 import androidx.core.content.FileProvider;
 import androidx.webkit.WebViewAssetLoader;
@@ -52,10 +53,16 @@ public class MainActivity extends Activity {
 
         web = new WebView(this);
         web.setBackgroundColor(0xFF0B0D10);
-        setContentView(web);
+        // La WebView ignore son propre padding : on la place dans un cadre
+        // qui, lui, laisse la place aux barres système.
+        FrameLayout root = new FrameLayout(this);
+        root.setBackgroundColor(0xFF0B0D10);
+        root.addView(web, new FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+        setContentView(root);
 
         // Android 15 affiche l'appli sous les barres système : on laisse la place.
-        web.setOnApplyWindowInsetsListener(new View.OnApplyWindowInsetsListener() {
+        root.setOnApplyWindowInsetsListener(new View.OnApplyWindowInsetsListener() {
             @Override
             public WindowInsets onApplyWindowInsets(View v, WindowInsets insets) {
                 if (Build.VERSION.SDK_INT >= 30) {
