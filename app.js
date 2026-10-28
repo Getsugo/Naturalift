@@ -3157,7 +3157,13 @@
       showList([{ action: "info", label: "Recherche de « " + query + " » sur Open Food Facts…" }]);
       searchOpenFoodFacts(query, function (results, failed) {
         if (cfg.searchInput.value.trim() !== query) return; // l'utilisateur a changé sa recherche
-        if (failed) { showList([{ action: "info", label: "Pas de connexion : Open Food Facts n'est pas joignable." }]); return; }
+        if (failed) {
+          // Hors ligne, ou serveur saturé (Open Food Facts limite les recherches par minute).
+          showList([{ action: "info", label: navigator.onLine === false ?
+            "Pas de connexion internet : les aliments Ciqual restent disponibles." :
+            "Open Food Facts est saturé : réessaie dans une minute, ou scanne le code-barres." }]);
+          return;
+        }
         if (!results.length) { showList([{ action: "info", label: "Aucun produit trouvé. Essaie le scan du code-barres ou la saisie « Manuel »." }]); return; }
         showList(results);
       });
