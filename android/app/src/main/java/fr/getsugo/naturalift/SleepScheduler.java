@@ -83,7 +83,21 @@ public final class SleepScheduler {
         AlarmManager am = (AlarmManager) ctx.getSystemService(Context.ALARM_SERVICE);
         if (am == null) return 0;
         AlarmManager.AlarmClockInfo info = am.getNextAlarmClock();
-        return info == null ? 0 : info.getTriggerTime();
+        return info == null ? 0 : roundAlarm(info.getTriggerTime());
+    }
+
+    /**
+     * L'Horloge Samsung programme le réveil un peu avant l'heure affichée
+     * (ex. 9:59 pour un réveil à 10:00). On arrondit à la minute, puis on
+     * recale sur le multiple de 5 minutes s'il est à 1 minute ou moins.
+     */
+    static long roundAlarm(long ms) {
+        long minute = 60_000L;
+        long t = ((ms + minute / 2) / minute) * minute;
+        long five = 5 * minute;
+        long toNextFive = (five - (t % five)) % five;
+        if (toNextFive > 0 && toNextFive <= minute) t += toNextFive;
+        return t;
     }
 
     static long bedtimeFor(Context ctx, long wake) {
