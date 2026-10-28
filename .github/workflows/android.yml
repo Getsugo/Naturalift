@@ -49,7 +49,7 @@ jobs:
       - name: Copier l'appli web dans le projet Android
         run: |
           mkdir -p android/app/src/main/assets/www android/app/src/main/res/drawable
-          cp index.html app.js style.css manifest.json html5-qrcode.min.js icon-*.png android/app/src/main/assets/www/
+          cp index.html app.js ciqual.js style.css manifest.json html5-qrcode.min.js icon-*.png android/app/src/main/assets/www/
           cp icon-192.png android/app/src/main/res/drawable/ic_launcher.png
 
       - name: Construire l'APK
