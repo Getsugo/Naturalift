@@ -1601,6 +1601,18 @@
     nativeCall(function (n) { n.syncHealth(); });
   }
 
+  function offerHealthSettings(intro) {
+    uiConfirm(intro + " Tu peux autoriser NaturaLift à la main : dans Health Connect, ouvre NaturaLift et active Sommeil, Pas et Exercice. Ouvrir Health Connect ?", "Ouvrir", function () {
+      var ok = nativeCall(function (n) { return n.openHealthSettings(); });
+      if (!ok) uiAlert("Impossible d'ouvrir Health Connect. Va dans Paramètres du téléphone → Health Connect → Autorisations des applis → NaturaLift.");
+    });
+  }
+
+  window.NaturaLiftHealthError = function (reason) {
+    healthState.requested = false;
+    offerHealthSettings("La fenêtre d'autorisation n'a pas pu s'ouvrir (" + String(reason).slice(0, 60) + ").");
+  };
+
   // Moyenne des pas des 14 jours précédents (référence « journée habituelle »).
   function stepsBaseline(steps, today) {
     var sum = 0, n = 0;
@@ -4513,6 +4525,7 @@
     $("rampStart").addEventListener("change", saveRampFromForm);
     $("rampStep").addEventListener("change", saveRampFromForm);
     $("healthBtn").addEventListener("click", function () {
+      healthState.requested = true;
       nativeCall(function (n) { n.requestHealth(); });
     });
     $("stepsAdjust").addEventListener("change", function () {
@@ -4529,6 +4542,18 @@
     // L'appli Android prévient quand elle revient au premier plan ou
     // qu'une permission change : on resynchronise.
     window.addEventListener("naturalift-native", function () {
+      // Retour de la fenêtre d'autorisation Samsung Health : si rien n'a été
+      // accordé (fenêtre refermée tout de suite), on propose la voie manuelle.
+      if (healthState.requested) {
+        healthState.requested = false;
+        var st = healthStatus();
+        if (st === "ok") {
+          syncHealth(true);
+          showToast("Samsung Health connecté");
+        } else if (st === "no_permission") {
+          offerHealthSettings("L'autorisation n'a pas été accordée.");
+        }
+      }
       syncHealth(false);
       checkForUpdate();
       refreshNativeSummary();
