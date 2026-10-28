@@ -515,6 +515,19 @@
   // Groupes Ciqual moins utiles pour un journal de musculation.
   var CIQUAL_DEMOTE = { "1101": 30, "1102": 30, "1103": 30, "1104": 30, "0101": 6, "0103": 4, "0104": 6, "0105": 6, "0106": 6 };
 
+  // Produits courants en salle absents de Ciqual : valeurs moyennes des
+  // étiquettes du commerce, pour 100 g. [nom, kcal, prot, gluc, lip, portion]
+  var USUAL_FOODS = [
+    ["Skyr nature", 63, 11, 4, 0.2, { label: "pot", grams: 150 }],
+    ["Skyr aux fruits", 80, 8.5, 10.5, 0.2, { label: "pot", grams: 150 }],
+    ["Yaourt grec 0 % (type Fage)", 54, 10.3, 3, 0, { label: "pot", grams: 170 }],
+    ["Whey isolat (poudre)", 370, 88, 2, 1, { label: "dose", grams: 30 }],
+    ["Caséine (poudre)", 360, 80, 5, 1.5, { label: "dose", grams: 30 }],
+    ["Protéine végétale de pois (poudre)", 380, 80, 3, 6, { label: "dose", grams: 30 }],
+    ["Barre protéinée (moyenne)", 360, 30, 35, 12, { label: "barre", grams: 60 }],
+    ["Crème de riz", 370, 7, 82, 1, null]
+  ];
+
   var ciqualIndex = null;
   function getCiqual() {
     if (ciqualIndex) return ciqualIndex;
@@ -522,6 +535,9 @@
     if (!src || !src.foods) return null;
     ciqualIndex = src.foods.map(function (f) {
       return { code: f[0], name: f[1], group: f[2], kcal: f[3], protein: f[4], carbs: f[5], fat: f[6], norm: normalizeText(f[1]) };
+    });
+    USUAL_FOODS.forEach(function (u, i) {
+      ciqualIndex.push({ code: "u" + i, name: u[0], group: "usuel", kcal: u[1], protein: u[2], carbs: u[3], fat: u[4], portion: u[5], norm: normalizeText(u[0]) });
     });
     return ciqualIndex;
   }
@@ -560,7 +576,8 @@
     out.sort(function (a, b) { return a.score - b.score; });
     return out.slice(0, limit).map(function (o) {
       var f = o.f;
-      return { id: "ciq-" + f.code, name: f.name, kcal: round(f.kcal), protein: round1(f.protein), fat: round1(f.fat), carbs: round1(f.carbs), source: "ciqual" };
+      return { id: "ciq-" + f.code, name: f.name, kcal: round(f.kcal), protein: round1(f.protein), fat: round1(f.fat), carbs: round1(f.carbs),
+        portion: f.portion || null, source: f.group === "usuel" ? "usuel" : "ciqual" };
     });
   }
 
@@ -601,7 +618,10 @@
     if (!food.source) return food;
     var existing = findFoodByName(loadFoods(), food.name);
     if (existing) return existing;
-    createFood({ name: food.name, kcal: food.kcal, protein: food.protein, fat: food.fat, carbs: food.carbs, barcode: food.barcode || null, portion: food.portion || null });
+    var portion = food.portion || null;
+    // Œufs Ciqual : on compte à l'unité (≈ 55 g sans coquille).
+    if (!portion && /^(oeuf|œuf)\b/i.test(food.name)) portion = { label: "œuf", grams: 55 };
+    createFood({ name: food.name, kcal: food.kcal, protein: food.protein, fat: food.fat, carbs: food.carbs, barcode: food.barcode || null, portion: portion });
     return findFoodByName(loadFoods(), food.name);
   }
 
@@ -3116,7 +3136,7 @@
       cfg.gramsInput.select();
     }
 
-    var SOURCE_BADGE = { ciqual: "Ciqual", off: "Open Food Facts" };
+    var SOURCE_BADGE = { ciqual: "Ciqual", usuel: "Usuel", off: "Open Food Facts" };
 
     function showList(items) {
       currentMatches = items;
@@ -3748,6 +3768,15 @@
     return fmtNum(q.grams) + " g";
   }
 
+  // Quantité raisonnable pour UN ajout (pas 7 œufs ou 300 g de riz d'un coup).
+  function mealCap(f) {
+    if (isSupplement(f.name)) return 40;
+    if (/(^|[^a-z])(oeuf|œuf)/i.test(f.name)) return 180;
+    if (f.fat >= 50) return 30;
+    if (f.kcal >= 300) return 150;
+    return f.kcal < 80 ? 300 : 250;
+  }
+
   // Aliments pour combler les protéines (puis les calories) qui manquent.
   function buildSuggestions(left) {
     var foods = loadFoods();
@@ -3770,7 +3799,7 @@
       var goal = Math.min(left.protein, 45);
       for (var i = 0; i < lean.length && out.length < 3; i++) {
         var f = lean[i];
-        var g = Math.min(goal / f.protein * 100, 400);
+        var g = Math.min(goal / f.protein * 100, mealCap(f));
         if (left.kcal > 0) g = Math.min(g, left.kcal / f.kcal * 100);
         if (g < 30) continue;
         var q = niceGrams(g, f);
@@ -3783,7 +3812,7 @@
       energy = rank(energy, function (f) { return (recent[f.id] ? 20 : 0) + (usage[f.id] || 0) * 3 + (f.carbs > f.fat ? 1 : 0); });
       for (var j = 0; j < energy.length && out.length < 3; j++) {
         var e = energy[j];
-        var ge = Math.min(left.kcal / e.kcal * 100, 300);
+        var ge = Math.min(left.kcal / e.kcal * 100, mealCap(e));
         if (ge < 20) continue;
         var qe = niceGrams(ge, e);
         out.push({ food: e, q: qe, m: macrosFor(e, qe.grams), why: "calories" });
@@ -4422,12 +4451,18 @@
     var kcalFixed = 0;
     protItems.forEach(function (it) { kcalFixed += it.per100.kcal * it.scaled / 100; });
     kcalFixed += sumOf(extras, "kcal");
-    var kcalOthers = sumOf(otherItems, "kcal");
+    // Fruits et légumes (peu caloriques) gardent leur quantité : ce sont les
+    // féculents et matières grasses qui s'ajustent aux calories.
+    function isLight(it) { return it.per100.kcal < 100; }
+    otherItems.forEach(function (it) { if (isLight(it)) kcalFixed += it.per100.kcal * it.daily / 100; });
+    var kcalOthers = sumOf(otherItems.filter(function (it) { return !isLight(it); }), "kcal");
     var sK = kcalOthers > 0 ? Math.max(0.7, Math.min(3, (target.kcal - kcalFixed) / kcalOthers)) : 1;
 
     var all = [];
     protItems.forEach(function (it) { all.push({ it: it, daily: it.scaled }); });
-    otherItems.forEach(function (it) { all.push({ it: it, daily: Math.min(it.daily * sK, Math.max(it.daily, dailyCap(it.per100, it.name))) }); });
+    otherItems.forEach(function (it) {
+      all.push({ it: it, daily: isLight(it) ? it.daily : Math.min(it.daily * sK, Math.max(it.daily, dailyCap(it.per100, it.name))) });
+    });
     extras.forEach(function (it) { all.push({ it: it, daily: it.daily }); });
 
     var planned = { kcal: 0, protein: 0 };

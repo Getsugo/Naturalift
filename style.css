@@ -2391,6 +2391,7 @@ body.no-scroll{ overflow: hidden; }
 }
 .ai-badge-ciqual{ background: var(--lime); }
 .ai-badge-off{ background: var(--cyan); }
+.ai-badge-usuel{ background: var(--amber); }
 .autocomplete-item.ai-action{ color: var(--cyan); }
 .autocomplete-item.ai-info{ color: var(--text-muted); font-weight: 500; cursor: default; }
 
