@@ -108,7 +108,7 @@
           <h2 class="card-title-sm card-title-gap">Ajouter un aliment</h2>
           <div class="segmented mode-toggle mode-toggle-3" role="radiogroup" aria-label="Mode d'ajout">
             <input type="radio" id="addModeDb" name="addMode" value="db" checked>
-            <label for="addModeDb" class="seg-btn">Ma base</label>
+            <label for="addModeDb" class="seg-btn">Rechercher</label>
             <input type="radio" id="addModeScan" name="addMode" value="scan">
             <label for="addModeScan" class="seg-btn">Scanner</label>
             <input type="radio" id="addModeManual" name="addMode" value="manual">
@@ -123,7 +123,7 @@
           <form id="dbAddForm" class="db-add-form">
             <div class="field field-wide autocomplete-wrap">
               <label for="foodSearch">Rechercher un aliment</label>
-              <input type="search" id="foodSearch" placeholder="Ex : poulet, riz, oeuf…" autocomplete="off" autocapitalize="off" spellcheck="false">
+              <input type="search" id="foodSearch" placeholder="Ex : escalope de dinde, riz basmati, skyr…" autocomplete="off" autocapitalize="off" spellcheck="false">
               <div id="foodSuggestions" class="autocomplete-list" hidden></div>
             </div>
             <p id="foodNoMatch" class="note" hidden>Choisis un aliment dans la liste, ou passe en saisie « Manuel ».</p>
@@ -886,6 +886,7 @@
   <button type="button" id="uiToastUndo" class="ui-toast-undo" hidden>Annuler</button>
 </div>
 
+<script src="./ciqual.js" defer></script>
 <script src="./app.js" defer></script>
 </body>
 </html>

@@ -268,6 +268,7 @@ button:focus-visible, input:focus-visible, select:focus-visible{
 
 .field input[type="number"],
 .field input[type="text"],
+.field input[type="time"],
 .field select{
   width: 100%;
   background: var(--surface-2);
@@ -2376,3 +2377,22 @@ body.no-scroll{ overflow: hidden; }
 @media (max-width: 380px){
   .nav-item{ font-size: 10.5px; }
 }
+
+/* Recherche d'aliments : origine des résultats */
+.ai-badge{
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  vertical-align: middle;
+  color: var(--bg);
+}
+.ai-badge-ciqual{ background: var(--lime); }
+.ai-badge-off{ background: var(--cyan); }
+.autocomplete-item.ai-action{ color: var(--cyan); }
+.autocomplete-item.ai-info{ color: var(--text-muted); font-weight: 500; cursor: default; }
+
+/* Champs d'heure : sélecteur natif en thème sombre */
+input[type="time"]{ color-scheme: dark; color: var(--text); }

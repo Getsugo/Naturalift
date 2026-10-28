@@ -491,6 +491,120 @@
     return matches;
   }
 
+  /* ---------------------------------------------------------
+     Bases d'aliments prêtes à l'emploi
+     - Ciqual (ANSES) : ~3 200 aliments génériques français, valeurs de
+       laboratoire, embarqués dans ciqual.js (marche hors ligne).
+     - Open Food Facts : produits de marque, recherche par nom en ligne.
+     Un aliment choisi dans l'une de ces bases est copié dans « ta base »,
+     puis se comporte comme les autres (portions, favoris, liste de courses).
+     --------------------------------------------------------- */
+
+  // Mots courants qui n'ont pas le même nom dans Ciqual.
+  var CIQUAL_SYNONYMS = [
+    [/\bblanc de poulet\b|\bfilet de poulet\b|\bescalope de poulet\b/, "poulet filet"],
+    [/\bblanc de dinde\b|\bfilet de dinde\b/, "dinde escalope"],
+    [/\bescalope de (dinde|porc|veau)\b/, "$1 escalope"],
+    [/\bsteak hache\b/, "steak hache"],
+    [/\bpates\b/, "pates"],
+    [/\boeufs\b/, "oeuf"],
+    [/\bpdt\b|\bpatates?\b(?! douce)/, "pomme de terre"],
+    [/\bflocons d'avoine\b/, "avoine flocon"]
+  ];
+
+  // Groupes Ciqual moins utiles pour un journal de musculation.
+  var CIQUAL_DEMOTE = { "1101": 30, "1102": 30, "1103": 30, "1104": 30, "0101": 6, "0103": 4, "0104": 6, "0105": 6, "0106": 6 };
+
+  var ciqualIndex = null;
+  function getCiqual() {
+    if (ciqualIndex) return ciqualIndex;
+    var src = window.CIQUAL;
+    if (!src || !src.foods) return null;
+    ciqualIndex = src.foods.map(function (f) {
+      return { code: f[0], name: f[1], group: f[2], kcal: f[3], protein: f[4], carbs: f[5], fat: f[6], norm: normalizeText(f[1]) };
+    });
+    return ciqualIndex;
+  }
+
+  function ciqualQueryWords(query) {
+    var q = normalizeText(query);
+    for (var i = 0; i < CIQUAL_SYNONYMS.length; i++) q = q.replace(CIQUAL_SYNONYMS[i][0], CIQUAL_SYNONYMS[i][1]);
+    // "de", "la", "du"… n'aident pas à trouver (ex : "escalope de dinde").
+    return q.split(" ").filter(function (w) { return (w.length > 1 || /^\d$/.test(w)) && ["de", "du", "des", "la", "le", "les", "au", "aux", "et", "en"].indexOf(w) < 0; });
+  }
+
+  function searchCiqual(query, limit, excludeNames) {
+    var db = getCiqual();
+    if (!db) return [];
+    var words = ciqualQueryWords(query);
+    if (!words.length) return [];
+    var out = [];
+    for (var i = 0; i < db.length; i++) {
+      var f = db[i];
+      var ok = true;
+      for (var w = 0; w < words.length; w++) {
+        var word = words[w];
+        // Un nombre doit correspondre en entier : "5" trouve "5% MG", pas "15% MG".
+        if (/^\d+$/.test(word) ? !new RegExp("(^|[^0-9,])" + word + "([^0-9,]|$)").test(f.norm) : f.norm.indexOf(word) === -1) { ok = false; break; }
+      }
+      if (!ok || (excludeNames && excludeNames[f.norm])) continue;
+      // Plus le nom est court et commence par la recherche, plus c'est un aliment « de base ».
+      var score = f.name.length / 12;
+      if (f.norm.indexOf(words[0]) === 0) score -= 4;
+      if (/\bcru(e|s|es)?\b/.test(f.norm)) score -= 1.5;
+      if (/aliment moyen/.test(f.norm)) score += 1;
+      if (/preemballe|appertise|surgele|fait maison/.test(f.norm)) score += 1.5;
+      score += CIQUAL_DEMOTE[f.group] || 0;
+      out.push({ f: f, score: score });
+    }
+    out.sort(function (a, b) { return a.score - b.score; });
+    return out.slice(0, limit).map(function (o) {
+      var f = o.f;
+      return { id: "ciq-" + f.code, name: f.name, kcal: round(f.kcal), protein: round1(f.protein), fat: round1(f.fat), carbs: round1(f.carbs), source: "ciqual" };
+    });
+  }
+
+  // Recherche par nom sur Open Food Facts (produits de marque).
+  function searchOpenFoodFacts(query, onDone) {
+    var url = "https://world.openfoodfacts.org/cgi/search.pl?search_simple=1&action=process&json=1&page_size=12" +
+      "&tagtype_0=countries&tag_contains_0=contains&tag_0=france&sort_by=unique_scans_n" +
+      "&fields=" + OFF_FIELDS + ",code&search_terms=" + encodeURIComponent(query);
+    fetch(url)
+      .then(function (r) { if (!r.ok) throw new Error("http-" + r.status); return r.json(); })
+      .then(function (data) {
+        var out = [];
+        (data.products || []).forEach(function (p) {
+          var n = p.nutriments || {};
+          var kcal = n["energy-kcal_100g"];
+          if ((kcal === undefined || kcal === null) && n["energy_100g"] !== undefined) kcal = n["energy_100g"] / 4.184;
+          var prot = n["proteins_100g"];
+          if (kcal === undefined || kcal === null || prot === undefined || prot === null) return; // valeurs incomplètes : ignoré
+          var name = p.product_name_fr || p.product_name || p.generic_name_fr || p.generic_name;
+          if (!name) return;
+          var brand = p.brands ? String(p.brands).split(",")[0].trim() : "";
+          if (brand && name.toLowerCase().indexOf(brand.toLowerCase()) === -1) name += " (" + brand + ")";
+          var q = parseNum(p.serving_quantity);
+          out.push({
+            id: "off-" + (p.code || out.length), name: String(name).slice(0, 80), barcode: p.code || null,
+            kcal: round(kcal), protein: round1(prot), fat: round1(n["fat_100g"] || 0), carbs: round1(n["carbohydrates_100g"] || 0),
+            portion: (!isNaN(q) && q > 0 && q < 2000) ? { label: "portion", grams: round1(q) } : null,
+            source: "off"
+          });
+        });
+        onDone(out, false);
+      })
+      .catch(function () { onDone([], true); });
+  }
+
+  // Copie un aliment Ciqual / Open Food Facts dans ta base (une seule fois).
+  function adoptFood(food) {
+    if (!food.source) return food;
+    var existing = findFoodByName(loadFoods(), food.name);
+    if (existing) return existing;
+    createFood({ name: food.name, kcal: food.kcal, protein: food.protein, fat: food.fat, carbs: food.carbs, barcode: food.barcode || null, portion: food.portion || null });
+    return findFoodByName(loadFoods(), food.name);
+  }
+
   function createFood(data) {
     var foods = loadFoods();
     var food = {
@@ -2987,6 +3101,14 @@
     }
 
     function selectMatch(food) {
+      if (!food || food.action === "info") return;
+      if (food.action === "off") { runOffSearch(food.query); return; }
+      // Aliment Ciqual ou Open Food Facts : copié dans ta base au premier choix.
+      if (food.source) {
+        var adopted = adoptFood(food);
+        if (adopted) food = adopted;
+        if (cfg.onFoodsChanged) cfg.onFoodsChanged();
+      }
       cfg.searchInput.value = food.name;
       hideSuggestions();
       updatePreview();
@@ -2994,34 +3116,67 @@
       cfg.gramsInput.select();
     }
 
-    function renderSuggestions() {
-      var query = cfg.searchInput.value.trim();
-      if (!query) { hideSuggestions(); return; }
+    var SOURCE_BADGE = { ciqual: "Ciqual", off: "Open Food Facts" };
 
-      currentMatches = searchFoods(query, MAX_SUGGESTIONS);
-      if (currentMatches.length === 0) { hideSuggestions(); return; }
-
+    function showList(items) {
+      currentMatches = items;
+      if (!items.length) { hideSuggestions(); return; }
       activeIndex = -1;
       var html = "";
-      for (var i = 0; i < currentMatches.length; i++) {
-        var f = currentMatches[i];
+      for (var i = 0; i < items.length; i++) {
+        var f = items[i];
+        if (f.action === "off") {
+          html += '<div class="autocomplete-item ai-action" data-index="' + i + '">🔎 ' + escapeHtml(f.label) + '</div>';
+          continue;
+        }
+        if (f.action === "info") {
+          html += '<div class="autocomplete-item ai-info">' + escapeHtml(f.label) + '</div>';
+          continue;
+        }
+        var badge = f.source ? '<span class="ai-badge ai-badge-' + f.source + '">' + SOURCE_BADGE[f.source] + '</span>' : '';
         html +=
           '<div class="autocomplete-item" data-index="' + i + '">' +
-            escapeHtml(f.name) +
+            escapeHtml(f.name) + badge +
             '<span class="ai-macros">' + f.kcal + ' kcal · P' + fmtNum(f.protein) + ' L' + fmtNum(f.fat) + ' G' + fmtNum(f.carbs) + ' /100g</span>' +
           '</div>';
       }
       cfg.suggestionsEl.innerHTML = html;
       cfg.suggestionsEl.hidden = false;
 
-      var items = cfg.suggestionsEl.querySelectorAll(".autocomplete-item");
-      for (var j = 0; j < items.length; j++) {
-        items[j].addEventListener("mousedown", function (ev) {
+      var els = cfg.suggestionsEl.querySelectorAll(".autocomplete-item[data-index]");
+      for (var j = 0; j < els.length; j++) {
+        els[j].addEventListener("mousedown", function (ev) {
           ev.preventDefault();
           var idx = parseInt(ev.currentTarget.getAttribute("data-index"), 10);
           selectMatch(currentMatches[idx]);
         });
       }
+    }
+
+    function runOffSearch(query) {
+      showList([{ action: "info", label: "Recherche de « " + query + " » sur Open Food Facts…" }]);
+      searchOpenFoodFacts(query, function (results, failed) {
+        if (cfg.searchInput.value.trim() !== query) return; // l'utilisateur a changé sa recherche
+        if (failed) { showList([{ action: "info", label: "Pas de connexion : Open Food Facts n'est pas joignable." }]); return; }
+        if (!results.length) { showList([{ action: "info", label: "Aucun produit trouvé. Essaie le scan du code-barres ou la saisie « Manuel »." }]); return; }
+        showList(results);
+      });
+    }
+
+    function renderSuggestions() {
+      var query = cfg.searchInput.value.trim();
+      if (!query) { hideSuggestions(); return; }
+
+      // 1) ta base, 2) Ciqual (aliments génériques), 3) Open Food Facts (marques) à la demande.
+      var mine = searchFoods(query, MAX_SUGGESTIONS);
+      var have = {};
+      loadFoods().forEach(function (f) { have[normalizeText(f.name)] = true; });
+      var ciq = normalizeText(query).length >= 2 ? searchCiqual(query, Math.max(4, 10 - mine.length), have) : [];
+      var items = mine.concat(ciq);
+      if (normalizeText(query).length >= 3) {
+        items.push({ action: "off", query: query, label: "Chercher « " + query + " » parmi les produits de marque" });
+      }
+      showList(items);
     }
 
     cfg.searchInput.addEventListener("input", function () {

@@ -6,6 +6,7 @@ Appli web (PWA) de nutrition pour la musculation naturelle : calcul des calories
 
 - **Objectif** : calcul des besoins (formule Mifflin-St Jeor × niveau d'activité) et des macros selon l'objectif (sèche, prise de masse, maintien, recomposition), avec un plancher de lipides.
 - **Dépense réelle** : après quelques semaines de journal et de pesées, l'appli calcule ta vraie dépense (apports moyens + évolution du poids) et propose de l'utiliser à la place de la formule.
+- **Aliments prêts à l'emploi** : la recherche couvre ta base, puis la table **Ciqual** de l'ANSES (≈ 3 200 aliments génériques, valeurs de laboratoire, hors ligne), puis à la demande les produits de marque d'**Open Food Facts**. Un aliment choisi est copié dans ta base.
 - **Journal du jour** : toucher un aliment pour modifier sa quantité ; quantités en grammes ou en portions (« 2 œufs ») ; recherche dans ta base d'aliments (sans tenir compte des accents), scan de code-barres (Open Food Facts), saisie manuelle avec photo, repas favoris, copie du journal de la veille.
 - **Toutes les journées** : flèches ‹ › pour passer d'un jour à l'autre et compléter un oubli.
 - **Type de journée** : glucides ajustés les jours d'entraînement (+15 %) et de repos (−15 %).
@@ -46,6 +47,7 @@ Le code de l'appli web reste à la racine : il est copié dans l'APK à chaque c
 | `index.html` | Structure de toutes les pages |
 | `style.css` | Apparence (couleurs dans `:root` en haut du fichier) |
 | `app.js` | Toute la logique de l'appli |
+| `ciqual.js` | Table Ciqual 2020 (ANSES, licence ouverte), générée automatiquement |
 | `sw.js` | Service worker : fonctionnement hors-ligne |
 | `manifest.json` | Nom, icônes et couleurs de l'appli installée |
 | `html5-qrcode.min.js` | Module de secours du scanner (bibliothèque externe, ne pas modifier) |

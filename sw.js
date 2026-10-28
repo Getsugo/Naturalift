@@ -18,6 +18,7 @@ var APP_SHELL = [
   "./index.html",
   "./style.css",
   "./app.js",
+  "./ciqual.js",
   "./manifest.json"
 ];
 
