@@ -137,9 +137,35 @@ public class NativeBridge {
                         activity.startActivityForResult(
                             HealthBridge.permissionIntent(activity), MainActivity.RC_HEALTH);
                     }
-                } catch (Exception ignored) { }
+                } catch (Throwable t) {
+                    // La fenêtre d'autorisation n'a pas pu s'ouvrir : on le dit à la page,
+                    // qui propose d'ouvrir les réglages Health Connect à la place.
+                    activity.sendHealthError(t.getClass().getSimpleName());
+                }
             }
         });
+    }
+
+    /** Ouvre les réglages Health Connect de NaturaLift pour autoriser à la main. */
+    @JavascriptInterface
+    public boolean openHealthSettings() {
+        final String pkg = activity.getPackageName();
+        final Intent[] candidates = new Intent[]{
+            new Intent("android.health.connect.action.MANAGE_HEALTH_PERMISSIONS")
+                .putExtra(Intent.EXTRA_PACKAGE_NAME, pkg),
+            new Intent("android.health.connect.action.HEALTH_HOME_SETTINGS"),
+            new Intent("androidx.health.ACTION_HEALTH_CONNECT_SETTINGS"),
+        };
+        final boolean[] opened = {false};
+        for (Intent i : candidates) {
+            try {
+                i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                activity.startActivity(i);
+                opened[0] = true;
+                break;
+            } catch (Throwable ignored) { }
+        }
+        return opened[0];
     }
 
     @JavascriptInterface

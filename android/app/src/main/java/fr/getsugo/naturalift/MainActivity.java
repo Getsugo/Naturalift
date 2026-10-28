@@ -219,6 +219,18 @@ public class MainActivity extends Activity {
         }
     }
 
+    /** Prévient la page que la demande d'autorisation Health Connect a échoué. */
+    void sendHealthError(final String reason) {
+        if (web == null) return;
+        web.post(new Runnable() {
+            @Override
+            public void run() {
+                web.evaluateJavascript(
+                    "window.NaturaLiftHealthError && window.NaturaLiftHealthError(" + JSONObject.quote(reason) + ");", null);
+            }
+        });
+    }
+
     /** Transmet à la page les données lues dans Health Connect. */
     void sendHealth(final String json) {
         if (web == null) return;
