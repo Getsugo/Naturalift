@@ -78,12 +78,41 @@ public final class SleepScheduler {
 
     /* ---------- Calcul ---------- */
 
-    /** Heure du prochain réveil en millisecondes, ou 0 s'il n'y en a pas. */
+    /**
+     * Heure du prochain réveil de l'Horloge en millisecondes, ou 0 s'il n'y en a pas.
+     *
+     * getNextAlarmClock() renvoie l'alarme la plus proche de N'IMPORTE QUELLE appli :
+     * le Calendrier Samsung y met aussi ses rappels d'événements (ex. anniversaire).
+     * On ne garde que les alarmes d'une appli Horloge. Si la plus proche vient d'une
+     * autre appli, on reprend le dernier réveil de l'Horloge vu, s'il est encore à venir.
+     */
     static long nextAlarm(Context ctx) {
         AlarmManager am = (AlarmManager) ctx.getSystemService(Context.ALARM_SERVICE);
         if (am == null) return 0;
         AlarmManager.AlarmClockInfo info = am.getNextAlarmClock();
-        return info == null ? 0 : roundAlarm(info.getTriggerTime());
+        SharedPreferences p = prefs(ctx);
+        if (info != null && isClockAlarm(info)) {
+            long t = roundAlarm(info.getTriggerTime());
+            p.edit().putLong("lastClockAlarm", t).apply();
+            return t;
+        }
+        if (info == null) {
+            // Plus aucune alarme programmée : le réveil a été désactivé.
+            p.edit().remove("lastClockAlarm").apply();
+            return 0;
+        }
+        long saved = p.getLong("lastClockAlarm", 0);
+        return saved > System.currentTimeMillis() ? saved : 0;
+    }
+
+    /** Vrai si l'alarme a été programmée par une appli Horloge / Réveil. */
+    static boolean isClockAlarm(AlarmManager.AlarmClockInfo info) {
+        PendingIntent show = info.getShowIntent();
+        if (show == null) return true; // origine inconnue : on garde l'ancien comportement
+        String pkg = show.getCreatorPackage();
+        if (pkg == null) return true;
+        pkg = pkg.toLowerCase(Locale.ROOT);
+        return pkg.contains("clock") || pkg.contains("alarm");
     }
 
     /**
